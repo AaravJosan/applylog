@@ -82,6 +82,34 @@ function extractJob() {
     ]).split('·')[0].trim();
     const id = new URLSearchParams(window.location.search).get('currentJobId')
       || (window.location.pathname.match(/\/jobs\/view\/(\d+)/) || [])[1];
+    // Newer LinkedIn layouts use generated class names, so fall back to the tab title
+    // ("Job title | Company | LinkedIn") and the text around the title in the top card.
+    const parts = document.title.replace(/^\(\d+\+?\)\s*/, '').split(' | ');
+    if (parts.length >= 3 && /linkedin/i.test(parts[parts.length - 1])) {
+      out.title = out.title || clean(parts[0]);
+      out.company = out.company || clean(parts[1]);
+    }
+    // The title also appears in the results list; use the details panel (the card with Apply/Save buttons).
+    const cards = (out.title ? [...document.querySelectorAll('h1, h2, a, p')] : [])
+      .filter((e) => clean(e.textContent) === out.title)
+      .map((heading) => {
+        let card = heading;
+        for (let i = 0; i < 8 && card && !card.querySelector('a[href*="/company/"]'); i++) card = card.parentElement;
+        for (let i = 0; i < 2 && card && card.parentElement; i++) card = card.parentElement;
+        return card;
+      }).filter(Boolean);
+    const card = cards.find((c) => c.querySelector('button')) || cards[0];
+    if (card && !out.location) {
+      const lines = [...new Set([...card.querySelectorAll('p, span, div, li')]
+        .filter((e) => ![...e.children].some((c) => /^(P|SPAN|DIV|LI)$/.test(c.tagName)))
+        .map((e) => clean(e.textContent)).filter(Boolean))];
+      const places = lines.filter((t) => t !== out.company && t !== out.title && t.length < 80 && /[a-z]/i.test(t)
+        && !/\b(ago|applicants?|clicked|people|promoted|responses|apply|save|reposted|alumni|connections?|work here|full-time|part-time|internship|contract|easy)\b/i.test(t)
+        && !/^(on-site|remote|hybrid)$/i.test(t));
+      const place = places.find((t) => /,|\bremote\b|united states/i.test(t)) || places[0] || '';
+      const mode = lines.find((t) => /^(on-site|remote|hybrid)$/i.test(t));
+      out.location = mode && !place.includes(`(${mode})`) ? [place, `(${mode})`].filter(Boolean).join(' ') : place;
+    }
     if (id) out.url = `https://www.linkedin.com/jobs/view/${id}/`;
   } else if (host.includes('indeed.')) {
     out.title = out.title || txt(['[data-testid="jobsearch-JobInfoHeader-title"]', 'h1']).replace(/\s*-\s*job post$/i, '');
@@ -91,7 +119,8 @@ function extractJob() {
     if (jk) out.url = `https://${host}/viewjob?jk=${jk}`;
   } else if (host.includes('greenhouse.io')) {
     out.title = out.title || txt(['.app-title', '.job__title h1', 'h1']);
-    out.company = out.company || txt(['.company-name']).replace(/^at\s+/i, '') || titleCase(pathParts[0]);
+    out.company = out.company || txt(['.company-name']).replace(/^at\s+/i, '')
+      || clean((document.title.match(/^Job Application for .+ at (.+)$/) || [])[1]) || titleCase(pathParts[0]);
     out.location = out.location || txt(['.location', '.job__location']);
   } else if (host.includes('lever.co')) {
     out.title = out.title || txt(['.posting-headline h2', 'h2']);
@@ -102,8 +131,12 @@ function extractJob() {
     out.company = out.company || titleCase(pathParts[0]);
   } else if (host.includes('myworkdayjobs.com')) {
     out.title = out.title || txt(['[data-automation-id="jobPostingHeader"]', 'h2']);
-    out.location = out.location || txt(['[data-automation-id="locations"] dd']);
-    out.company = out.company || titleCase(host.split('.')[0]);
+    // Workday's structured data repeats the country and names the legal entity ("2100 NVIDIA USA"),
+    // so prefer the page's location and the subdomain, keeping the posting's capitalization.
+    out.location = txt(['[data-automation-id="jobPostingPage"] [data-automation-id="locations"] dd', '[data-automation-id="locations"] dd']) || out.location;
+    const slug = host.split('.')[0];
+    const inName = (out.company.match(new RegExp(slug.replace(/[^a-z0-9]/gi, ''), 'i')) || [])[0];
+    out.company = inName || titleCase(slug);
   } else if (host.includes('joinhandshake.com')) {
     // Job details live in the right-hand panel on /job-search/<id>, or the whole page on /jobs/<id>
     const panel = document.querySelector('[data-hook="right-content"]') || document.querySelector('main') || document;
@@ -122,9 +155,20 @@ function extractJob() {
     if (id) out.url = `https://${host}/jobs/${id}`;
   }
 
-  // 3. Generic fallbacks
-  out.title = out.title || meta('og:title') || txt('h1') || clean(document.title);
-  out.company = out.company || meta('og:site_name');
+  // 3. Generic fallbacks (company career sites without structured data)
+  // Page titles look like "Job title - Jobs - Careers at Apple" or "Job title — Google Careers":
+  // keep the first part, and read the company from the "Careers" part if there is one.
+  const titleParts = (meta('og:title') || clean(document.title)).split(/\s+[|–—-]\s+/);
+  const siteParts = titleParts.slice(1).filter((p) => /\b(careers?|jobs?|hiring)\b/i.test(p));
+  const fromTitle = siteParts.map((p) => clean(p.replace(/^(careers?|jobs?)\s+(at|@)\s+/i, '').replace(/\s+(careers?|jobs?)$/i, '')))
+    .find((p) => p && !/\b(careers?|jobs?|hiring)\b/i.test(p));
+  const pageTitle = titleParts.filter((p) => !siteParts.includes(p)).join(' - ');
+  const domain = host.replace(/^(www|careers?|jobs?|apply)\./, '').split('.');
+  const fromHost = titleCase(domain.length > 2 && /^(co|com)$/.test(domain[domain.length - 2]) ? domain[domain.length - 3] : domain[domain.length - 2]);
+  const siteName = meta('og:site_name').replace(/\.(jobs|com|careers)$/i, '');
+  out.title = out.title || pageTitle || txt('h1');
+  out.company = out.company || fromTitle || siteName || fromHost;
+  out.location = out.location || txt(['[itemprop="jobLocation"]', '[id*="joblocation" i]', '[class*="job-location" i]', '[class*="joblocation" i]', '[data-testid*="job-location" i]']);
 
   for (const k of Object.keys(out)) out[k] = (out[k] || '').slice(0, 500);
   return out;
