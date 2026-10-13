@@ -104,6 +104,22 @@ function extractJob() {
     out.title = out.title || txt(['[data-automation-id="jobPostingHeader"]', 'h2']);
     out.location = out.location || txt(['[data-automation-id="locations"] dd']);
     out.company = out.company || titleCase(host.split('.')[0]);
+  } else if (host.includes('joinhandshake.com')) {
+    // Job details live in the right-hand panel on /job-search/<id>, or the whole page on /jobs/<id>
+    const panel = document.querySelector('[data-hook="right-content"]') || document.querySelector('main') || document;
+    out.title = out.title || clean((panel.querySelector('h1') || {}).textContent);
+    const employer = [...panel.querySelectorAll('a[href*="/e/"], a[href*="/employers/"]')]
+      .map((a) => clean(a.textContent)).find((t) => t && !/^learn more/i.test(t));
+    out.company = out.company || employer || '';
+    const glance = [...panel.querySelectorAll('h2, h3')].find((h) => /at a glance/i.test(h.textContent));
+    if (glance && !out.location) {
+      let box = glance.parentElement;
+      while (box && box !== panel && box.querySelectorAll('*').length < 5) box = box.parentElement;
+      const lines = [...(box || glance).querySelectorAll('*')].filter((e) => !e.children.length).map((e) => clean(e.textContent));
+      out.location = lines.find((t) => /\b(remote|hybrid|on-?site|based in)\b/i.test(t)) || '';
+    }
+    const id = (window.location.pathname.match(/\/(?:jobs|job-search)\/(\d+)/) || [])[1];
+    if (id) out.url = `https://${host}/jobs/${id}`;
   }
 
   // 3. Generic fallbacks

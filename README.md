@@ -5,7 +5,7 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 ## Features
 
 - **One-click capture**: open a job posting, click the extension, and the title, company, location and URL are filled in for you.
-- **Works on major job sites**: LinkedIn, Indeed, Greenhouse, Lever, Ashby, Workday, plus any site that publishes standard `JobPosting` structured data.
+- **Works on major job sites**: LinkedIn, Indeed, Handshake, Greenhouse, Lever, Ashby, Workday, plus any site that publishes standard `JobPosting` structured data.
 - **Networking columns**: track whether you're connected with someone at the company, who your contact is, and your referral status.
 - **Find connections fast**: one button opens a LinkedIn search for your 1st-degree connections at that company.
 - **No duplicates**: revisit a job you've already saved and the extension loads its row, so you can update status or referral instead of adding a new one.
