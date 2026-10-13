@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ApplyLog</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="logo">A</span> ApplyLog</div>
+    <button id="openOptions" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
+  </header>
+
+  <div id="setupBanner" class="banner" hidden>
+    Connect your Google Sheet first.
+    <button id="setupBtn" class="link-btn">Open settings →</button>
+  </div>
+
+  <div id="existingBanner" class="banner info" hidden>
+    Already in your sheet. Changes will update that row.
+  </div>
+
+  <form id="jobForm" autocomplete="off">
+    <section>
+      <h2>Job details</h2>
+      <label>Job title<input id="title" required></label>
+      <label>Company<input id="company" required></label>
+      <label>Location<input id="location"></label>
+      <label>URL<input id="url" type="url" required></label>
+    </section>
+
+    <section>
+      <h2>Tracking</h2>
+      <div class="row">
+        <label>Status
+          <select id="status">
+            <option>Saved</option>
+            <option>Applied</option>
+            <option>Interviewing</option>
+            <option>Offer</option>
+            <option>Rejected</option>
+            <option>Withdrawn</option>
+          </select>
+        </label>
+        <label>Referral
+          <select id="referral">
+            <option>Not asked</option>
+            <option>Asked</option>
+            <option>Received</option>
+            <option>Declined</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Connected on LinkedIn
+          <select id="connected">
+            <option>No</option>
+            <option>Request sent</option>
+            <option>Yes</option>
+          </select>
+        </label>
+        <label>Contact name<input id="contact" placeholder="Who you know there"></label>
+      </div>
+      <button type="button" id="findPeople" class="ghost">Find my LinkedIn connections at this company ↗</button>
+      <label>Notes<textarea id="notes" rows="2" placeholder="Salary, recruiter, next steps…"></textarea></label>
+    </section>
+
+    <button type="submit" id="saveBtn" class="primary">Add to sheet</button>
+    <div id="msg" class="msg" role="status" aria-live="polite"></div>
+  </form>
+
+  <script src="popup.js"></script>
+</body>
+</html>

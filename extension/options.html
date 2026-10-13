@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>ApplyLog Settings</title>
+  <link rel="stylesheet" href="popup.css">
+  <style>
+    body { width: auto; max-width: 560px; margin: 32px auto; padding: 0 16px; font-size: 14px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    p.sub { color: var(--ink-2); margin: 0 0 18px; }
+    ol { padding-left: 18px; color: var(--ink-2); }
+    ol li { margin-bottom: 4px; }
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .secondary { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink);
+      font: 600 14px system-ui, sans-serif; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>ApplyLog settings</h1>
+  <p class="sub">Connect the extension to your Google Sheet.</p>
+
+  <section>
+    <h2>Quick setup</h2>
+    <ol>
+      <li>Open your Google Sheet → <b>Extensions → Apps Script</b>.</li>
+      <li>Paste in <code>Code.gs</code> from this project and set your own <code>SECRET</code>.</li>
+      <li>Run <b>setup</b> once, then <b>Deploy → New deployment → Web app</b> (Execute as: Me, Who has access: Anyone).</li>
+      <li>Paste the web app URL and your secret below.</li>
+    </ol>
+  </section>
+
+  <form id="optForm">
+    <section>
+      <label>Apps Script web app URL
+        <input id="webAppUrl" type="url" placeholder="https://script.google.com/macros/s/…/exec" required>
+      </label>
+      <label>Secret key (must match SECRET in Code.gs)
+        <input id="secret" type="password" required>
+      </label>
+    </section>
+    <div class="actions">
+      <button type="button" id="testBtn" class="secondary">Test connection</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+    <div id="msg" class="msg" role="status" aria-live="polite"></div>
+  </form>
+
+  <script src="options.js"></script>
+</body>
+</html>
