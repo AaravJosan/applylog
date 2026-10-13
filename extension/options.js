@@ -6,7 +6,7 @@ function showMsg(text, type = '') {
 }
 
 function isValidUrl(u) {
-  return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(u);
+  return /^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/[^/]+\/exec$/.test(u);
 }
 
 async function load() {
