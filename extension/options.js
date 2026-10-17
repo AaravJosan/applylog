@@ -147,3 +147,28 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 showResume();
 showAnswers();
+
+// Drafting written answers through the native helper
+async function loadDrafts() {
+  const { draftsEnabled = true } = await chrome.storage.local.get('draftsEnabled');
+  $('draftsEnabled').checked = draftsEnabled;
+}
+
+$('draftsEnabled').addEventListener('change', (e) => chrome.storage.local.set({ draftsEnabled: e.target.checked }));
+
+$('testDrafts').addEventListener('click', async () => {
+  const msg = $('draftsMsg');
+  msg.textContent = 'Checking…';
+  msg.className = 'msg';
+  const res = await chrome.runtime.sendMessage({ type: 'ping' });
+  if (!res.ok) { msg.textContent = res.error; msg.className = 'msg err'; return; }
+  if (res.loggedIn === false) {
+    msg.textContent = `Helper works (Claude Code ${res.claude}), but the claude CLI isn’t logged in. Run claude in Terminal and log in.`;
+    msg.className = 'msg err';
+    return;
+  }
+  msg.textContent = `✓ Helper works with Claude Code ${res.claude}`;
+  msg.className = 'msg ok';
+});
+
+loadDrafts();

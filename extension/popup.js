@@ -279,7 +279,8 @@ function showAutofillMsg(text, type = '') {
 }
 
 $('autofillBtn').addEventListener('click', async () => {
-  const { profile = {}, answers = [], resume = null } = await chrome.storage.local.get(['profile', 'answers', 'resume']);
+  const { profile = {}, answers = [], resume = null, draftsEnabled = true } =
+    await chrome.storage.local.get(['profile', 'answers', 'resume', 'draftsEnabled']);
   if (!Object.values(profile).some(Boolean)) {
     showAutofillMsg('Add your details under ⚙ Settings → Autofill profile first.', 'err');
     return;
@@ -291,20 +292,23 @@ $('autofillBtn').addEventListener('click', async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const target = await injectAutofill(tab.id);
     const results = await chrome.scripting.executeScript({
-      target, func: (data) => window.__applylog && window.__applylog.fill(data), args: [{ profile, answers, resume }]
+      target, func: (data) => window.__applylog && window.__applylog.fill(data),
+      args: [{ profile, answers, resume, drafts: draftsEnabled }]
     });
-    const filled = [], saved = [], missing = [];
+    const filled = [], saved = [], missing = [], drafting = [];
     for (const { result } of results) {
       if (!result) continue;
       filled.push(...result.filled);
       saved.push(...result.saved);
       missing.push(...result.missing);
+      drafting.push(...(result.drafting || []));
     }
     const total = filled.length + saved.length;
     let text = total ? `✓ Filled ${total} field${total === 1 ? '' : 's'}` : 'No matching empty fields found.';
     if (saved.length) text += ` (${saved.length} from saved answers, in blue)`;
     if (missing.length) text += `. Still needs you: ${missing.slice(0, 4).join('; ')}${missing.length > 4 ? ` +${missing.length - 4} more` : ''}`;
-    showAutofillMsg(text + '. Review before submitting.', total ? 'ok' : '');
+    if (drafting.length) text += `. Drafting ${drafting.length} written answer${drafting.length === 1 ? '' : 's'} with Claude (purple when ready, about 30 seconds; you can close this)`;
+    showAutofillMsg(text + '. Review before submitting.', total || drafting.length ? 'ok' : '');
   } catch (err) {
     showAutofillMsg('Can’t fill this page.', 'err');
   } finally {
@@ -326,6 +330,12 @@ $('rememberBtn').addEventListener('click', async () => {
   } catch (err) {
     showAutofillMsg('Can’t read this page.', 'err');
   }
+});
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type !== 'draftDone') return;
+  if (msg.ok) showAutofillMsg(`✓ Drafted ${msg.count} written answer${msg.count === 1 ? '' : 's'} (purple). Read and edit before submitting.`, 'ok');
+  else showAutofillMsg(`Couldn’t draft answers: ${msg.error}`, 'err');
 });
 
 const openOptions = () => chrome.runtime.openOptionsPage();

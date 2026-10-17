@@ -5,7 +5,10 @@
  *
  * Fills only empty fields and never submits. Colours:
  *   green = from your profile, blue = from your saved answers (double-check),
- *   amber = required and still empty.
+ *   purple = drafted by Claude (read and edit it), amber = required and still empty.
+ *
+ * Open-ended questions ("Why do you want to work here?") are sent with the job
+ * description to the background worker, which asks the native helper to draft them.
  */
 (() => {
   if (window.__applylog) return; // already injected into this page
@@ -83,11 +86,15 @@
   const TITLES = 'legend, label, [class*="label" i], [class*="title" i], [class*="question" i], [data-automation-id="formLabel"]';
   const PLACEHOLDER_TEXT = /^(select|select one|select\.\.\.|choose|choose one|please select|--|)$/i;
 
-  const COLORS = { profile: '#34a853', saved: '#4285f4', missing: '#f9ab00' };
+  const COLORS = { profile: '#34a853', saved: '#4285f4', draft: '#a142f4', missing: '#f9ab00' };
+
+  // Questions worth a written answer rather than a lookup
+  const OPEN_ENDED = /\bwhy\b|tell (us|me)|describe|cover letter|explain|what (excites|interests|motivates|draws|attracts)|share (a|an|with|about|your)|about yourself|anything else|additional information|elaborate/i;
 
   let P = {};
   let LIB = [];
   let RESUME = null;
+  let DRAFTS = false;
   let report = null;
   let seen = new WeakSet();
   let observer = null;
@@ -366,6 +373,7 @@
         }
       }
       if (ok) mark(el, ans.source, q, ans.key);
+      else if (DRAFTS && !isSelect && isOpenEnded(el, q)) report.open.push(el);
       else if (isRequired(el, q)) mark(el, 'missing', q);
     }
 
@@ -413,19 +421,116 @@
     }
   }
 
+  // ---------- Drafting open-ended answers ----------
+
+  function isOpenEnded(el, question) {
+    if (!question || el.hasAttribute('data-applylog-drafting') || ruleFor(norm(question))) return false;
+    if (el.tagName === 'INPUT' && !['text', ''].includes((el.getAttribute('type') || '').toLowerCase())) return false;
+    return el.tagName === 'TEXTAREA' || OPEN_ENDED.test(question);
+  }
+
+  /** The posting itself: structured data if the page has it, else the biggest description block. */
+  function jobContext() {
+    const job = { title: '', company: '', url: location.href, description: '' };
+    const strip = (html) => {
+      const d = document.createElement('div');
+      d.innerHTML = html || '';
+      return d.textContent;
+    };
+    const find = (node) => {
+      if (!node || typeof node !== 'object') return null;
+      if (Array.isArray(node)) { for (const n of node) { const r = find(n); if (r) return r; } return null; }
+      if ([].concat(node['@type']).includes('JobPosting')) return node;
+      return find(node['@graph']);
+    };
+    for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+      try {
+        const jp = find(JSON.parse(s.textContent));
+        if (!jp) continue;
+        job.title = clean(jp.title);
+        job.company = clean(jp.hiringOrganization && jp.hiringOrganization.name);
+        job.description = strip(jp.description);
+        break;
+      } catch (e) { /* malformed JSON-LD */ }
+    }
+    if (job.description.length < 300) {
+      const SEL = '.job__description, [class*="job-description" i], [class*="jobDescription" i], [class*="job-post" i], '
+        + '[data-automation-id="jobPostingDescription"], [class*="description" i], #content, article, main';
+      let best = '';
+      for (const el of document.querySelectorAll(SEL)) {
+        if (el.querySelector('input:not([type=hidden]), textarea, select')) continue; // that's the form
+        const t = el.innerText || '';
+        if (t.length > best.length) best = t;
+      }
+      if (best.length > job.description.length) job.description = best;
+    }
+    job.description = job.description.replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim().slice(0, 15000);
+    const og = (n) => (document.querySelector(`meta[property="${n}"]`) || {}).content || '';
+    job.title = job.title || clean(og('og:title')) || textOf(document.querySelector('h1')) || clean(document.title);
+    // "Job Application for Program Manager at Discord"
+    job.company = job.company || clean(og('og:site_name')) || (clean(document.title).match(/\bat ([^|–—-]+)$/) || [])[1] || '';
+    return job;
+  }
+
+  function setDrafting(el, on) {
+    if (on) {
+      el.setAttribute('data-applylog-drafting', el.placeholder || '');
+      el.placeholder = 'ApplyLog: drafting an answer with Claude…';
+      el.style.outline = `2px dashed ${COLORS.draft}`;
+      el.style.outlineOffset = '1px';
+    } else {
+      el.placeholder = el.getAttribute('data-applylog-drafting') || '';
+      el.removeAttribute('data-applylog-drafting');
+    }
+  }
+
+  async function draftAnswers(fields) {
+    const questions = fields.map((el, i) => {
+      el.setAttribute('data-applylog-qid', `q${i + 1}`);
+      setDrafting(el, true);
+      const q = clean(questionFor(el)).replace(/[*✱]\s*$/, '');
+      return { id: `q${i + 1}`, q, maxLength: el.maxLength > 0 ? el.maxLength : undefined };
+    });
+    let res;
+    try {
+      res = await chrome.runtime.sendMessage({ type: 'draft', questions, job: jobContext() });
+    } catch (e) {
+      res = { ok: false, error: e.message };
+    }
+    const byId = new Map(((res && res.answers) || []).map((a) => [a.id, a.text]));
+    for (const el of fields) {
+      setDrafting(el, false);
+      const text = byId.get(el.getAttribute('data-applylog-qid'));
+      el.removeAttribute('data-applylog-qid');
+      if (text && !el.value.trim()) { // don't overwrite anything you typed meanwhile
+        setValue(el, el.maxLength > 0 ? text.slice(0, el.maxLength) : text);
+        el.style.outline = `2px solid ${COLORS.draft}`;
+        el.title = 'Drafted by Claude from your resume and the job description. Read and edit before submitting.';
+      } else if (!el.value.trim()) {
+        el.style.outline = `2px solid ${COLORS.missing}`;
+        el.title = `ApplyLog couldn't draft this: ${(res && res.error) || 'no answer returned'}`;
+      } else {
+        el.style.outline = ''; // you answered it yourself
+      }
+    }
+  }
+
   // ---------- Public API ----------
 
-  async function fill({ profile = {}, answers = [], resume = null }) {
+  async function fill({ profile = {}, answers = [], resume = null, drafts = false }) {
     P = { ...profile };
     P.fullName = [P.firstName, P.lastName].filter(Boolean).join(' ');
     P.preferredName = P.preferredName || P.firstName;
     P.location = [P.city, P.state].filter(Boolean).join(', ');
     LIB = answers;
     RESUME = resume && resume.data ? resume : null;
-    report = { filled: [], saved: [], missing: [] };
+    DRAFTS = drafts;
+    report = { filled: [], saved: [], missing: [], open: [] };
     seen = new WeakSet();
     await pass();
-    const result = report;
+    const result = { ...report, drafting: report.open.map((el) => clean(questionFor(el)).replace(/[*✱]\s*$/, '').slice(0, 120)) };
+    delete result.open;
+    if (report.open.length) draftAnswers(report.open);
 
     // Multi-step forms (Workday, LinkedIn Easy Apply) swap in new fields without
     // reloading. Keep filling fields we haven't seen for the next 30 minutes.
@@ -437,8 +542,11 @@
       timer = setTimeout(async () => {
         if (running) return;
         running = true;
-        report = { filled: [], saved: [], missing: [] };
-        try { await pass(); } finally { running = false; }
+        report = { filled: [], saved: [], missing: [], open: [] };
+        try {
+          await pass();
+          if (report.open.length) draftAnswers(report.open);
+        } finally { running = false; }
       }, 800);
     });
     observer.observe(document.body, { childList: true, subtree: true });

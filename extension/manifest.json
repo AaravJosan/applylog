@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ApplyLog: Job Tracker for Google Sheets",
   "short_name": "ApplyLog",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Save job postings to a Google Sheet in one click, autofill applications, and track LinkedIn connections and referrals.",
   "action": {
     "default_popup": "popup.html",
@@ -19,7 +19,8 @@
     "128": "icons/icon128.png"
   },
   "options_page": "options.html",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "background": { "service_worker": "background.js" },
+  "permissions": ["activeTab", "scripting", "storage", "nativeMessaging"],
   "host_permissions": [
     "https://script.google.com/*",
     "https://script.googleusercontent.com/*"
