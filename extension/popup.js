@@ -312,7 +312,7 @@ $('autofillBtn').addEventListener('click', async () => {
     let text = total ? `✓ Filled ${total} field${total === 1 ? '' : 's'}` : 'No matching empty fields found';
     if (saved.length) text += ` (${saved.length} from saved answers, in blue)`;
     if (missing.length) text += `. Still needs you: ${missing.slice(0, 4).join('; ')}${missing.length > 4 ? ` +${missing.length - 4} more` : ''}`;
-    if (drafting.length) text += `. Drafting ${drafting.length} written answer${drafting.length === 1 ? '' : 's'} with Claude (purple when ready, about 30 seconds; you can close this)`;
+    if (drafting.length) text += `. Asking Claude about ${drafting.length} question${drafting.length === 1 ? '' : 's'} (purple when ready, under a minute; you can close this)`;
     showAutofillMsg(text + '. Review before submitting.', total || drafting.length ? 'ok' : '');
   } catch (err) {
     showAutofillMsg('Can’t fill this page.', 'err');
@@ -339,7 +339,7 @@ $('rememberBtn').addEventListener('click', async () => {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type !== 'draftDone') return;
-  if (msg.ok) showAutofillMsg(`✓ Drafted ${msg.count} written answer${msg.count === 1 ? '' : 's'} (purple). Read and edit before submitting.`, 'ok');
+  if (msg.ok) showAutofillMsg(`✓ Claude answered ${msg.count} question${msg.count === 1 ? '' : 's'} (purple). Check them before submitting; any left amber need you.`, 'ok');
   else showAutofillMsg(`Couldn’t draft answers: ${msg.error}`, 'err');
 });
 

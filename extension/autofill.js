@@ -5,10 +5,12 @@
  *
  * Fills only empty fields and never submits. Colours:
  *   green = from your profile, blue = from your saved answers (double-check),
- *   purple = drafted by Claude (read and edit it), amber = required and still empty.
+ *   purple = drafted or picked by Claude (check it), amber = required and still empty.
  *
- * Open-ended questions ("Why do you want to work here?") are sent with the job
- * description to the background worker, which asks the native helper to draft them.
+ * Open-ended questions ("Why do you want to work here?") and required multiple-choice
+ * questions your profile can't answer are sent with the job description to the
+ * background worker, which asks the native helper (Claude) to answer them.
+ * Legal status, demographics, salary and consent questions are never sent.
  */
 (() => {
   if (window.__applylog) return; // already injected into this page
@@ -99,6 +101,10 @@
   const PLACEHOLDER_TEXT = /^(select|select one|select\.\.\.|choose|choose one|please select|--|)$/i;
 
   const COLORS = { profile: '#34a853', saved: '#4285f4', draft: '#a142f4', missing: '#f9ab00' };
+
+  // Never guessed by Claude: legal status, demographics and money stay yours to answer
+  const NEVER_ASK = new Set(['workAuth', 'sponsorship', 'over18', 'gender', 'hispanic', 'race', 'veteran', 'disability', 'pronouns', 'salary']);
+  const NEVER_ASK_TEXT = /acknowledg|consent|certif|attest|\bagree|privacy|criminal|convict|felony|background check|signature/i;
 
   // Questions worth a written answer rather than a lookup
   const OPEN_ENDED = /\bwhy\b|tell (us|me)|describe|cover letter|explain|what (excites|interests|motivates|draws|attracts)|share (a|an|with|about|your)|about yourself|anything else|additional information|elaborate/i;
@@ -372,8 +378,12 @@
         ok = rs === null ? await fillCombobox(el, ans) : rs;
         if (ok) mark(el, ans.source, q, ans.key);
       }
-      if (!ok && isRequired(el, q) && !(bridge(el, { op: 'read' }) || { value: [] }).value.length && !el.value) {
-        mark(el, 'missing', q);
+      const st = bridge(el, { op: 'read' });
+      if (!ok && isRequired(el, q) && !(st || { value: [] }).value.length && !el.value) {
+        if (st && st.options.length && canAsk(q)) {
+          askChoice(el, q, st.options, (i) => bridge(el, { op: 'select', index: i }),
+            () => !(bridge(el, { op: 'read' }) || { value: [] }).value.length);
+        } else mark(el, 'missing', q);
       }
       await sleep(60);
     }
@@ -396,6 +406,7 @@
     for (const el of document.querySelectorAll('input, textarea, select')) {
       if (el.getAttribute('role') === 'combobox' || SKIP.includes((el.type || '').toLowerCase())) continue;
       if (!fresh(el) || el.disabled || el.readOnly || !visible(el)) continue;
+      if (el.getAttribute('aria-hidden') === 'true') continue; // dropdowns' hidden "required" inputs
       const q = questionFor(el);
       const isSelect = el.tagName === 'SELECT';
       const empty = isSelect ? (!el.value || el.selectedIndex <= 0) : !el.value.trim();
@@ -411,9 +422,12 @@
           ok = true;
         }
       }
+      const real = isSelect ? [...el.options].filter((o) => o.value && !PLACEHOLDER_TEXT.test(o.text.trim())) : [];
       if (ok) mark(el, ans.source, q, ans.key);
-      else if (DRAFTS && !isSelect && isOpenEnded(el, q)) report.open.push(el);
-      else if (isRequired(el, q)) mark(el, 'missing', q);
+      else if (DRAFTS && !isSelect && isOpenEnded(el, q)) askText(el, q);
+      else if (isSelect && real.length && isRequired(el, q) && canAsk(q)) {
+        askChoice(el, q, real.map((o) => clean(o.text)), (i) => setValue(el, real[i].value), () => el.selectedIndex <= 0 || !el.value);
+      } else if (isRequired(el, q)) mark(el, 'missing', q);
     }
 
     // Radio groups
@@ -430,8 +444,11 @@
       const ans = answerFor(group[0], q);
       const opts = group.map((r) => ({ el: r, text: [...(r.labels || [])].map(textOf).join(' ') || r.value, value: r.value }));
       const choice = ans && pickOption(opts, ans.value);
+      const box = group[0].closest(CONTAINERS) || group[0];
       if (choice) { choice.el.click(); mark(choice.el.closest('label') || choice.el, ans.source, q, ans.key); }
-      else if (isRequired(group[0], q) || /[*✱]/.test(q)) mark(group[0].closest(CONTAINERS) || group[0], 'missing', q);
+      else if ((isRequired(group[0], q) || /[*✱]/.test(q)) && canAsk(q)) {
+        askChoice(box, q, opts.map((o) => clean(o.text)), (i) => opts[i].el.click(), () => !group.some((r) => r.checked));
+      } else if (isRequired(group[0], q) || /[*✱]/.test(q)) mark(box, 'missing', q);
     }
 
     // Yes/No button pairs (Ashby and others)
@@ -447,7 +464,10 @@
       const ans = answerFor(btns[0], q);
       const choice = ans && pickOption(btns.map((b) => ({ el: b, text: textOf(b), value: '' })), ans.value);
       if (choice) { choice.el.click(); mark(box, ans.source, q, ans.key); }
-      else if (/[*✱]/.test(q)) mark(box, 'missing', q);
+      else if (/[*✱]/.test(q) && canAsk(q)) {
+        askChoice(box, q, btns.map(textOf), (i) => btns[i].click(),
+          () => !btns.some((b) => b.getAttribute('aria-pressed') === 'true' || /active|selected/i.test(b.className)));
+      } else if (/[*✱]/.test(q)) mark(box, 'missing', q);
     }
 
     // Dropdown buttons that open a listbox (Workday)
@@ -512,24 +532,39 @@
     return job;
   }
 
-  function setDrafting(el, on) {
-    if (on) {
-      el.setAttribute('data-applylog-drafting', el.placeholder || '');
-      el.placeholder = 'ApplyLog: drafting an answer with Claude…';
-      el.style.outline = `2px dashed ${COLORS.draft}`;
-      el.style.outlineOffset = '1px';
-    } else {
-      el.placeholder = el.getAttribute('data-applylog-drafting') || '';
-      el.removeAttribute('data-applylog-drafting');
-    }
+  const outlineTarget = (el) => el.closest('[class*="select__control"]') || el;
+  const tidy = (q) => clean(q).replace(/[*✱]\s*$/, '').slice(0, 300);
+
+  /** Claude may answer this only if it isn't about legal status, demographics, money or consent. */
+  function canAsk(question) {
+    if (!DRAFTS || !question) return false;
+    const key = ruleFor(norm(question));
+    return !(key && NEVER_ASK.has(key)) && !NEVER_ASK_TEXT.test(question);
   }
 
-  async function draftAnswers(fields) {
-    const questions = fields.map((el, i) => {
-      el.setAttribute('data-applylog-qid', `q${i + 1}`);
-      setDrafting(el, true);
-      const q = clean(questionFor(el)).replace(/[*✱]\s*$/, '');
-      return { id: `q${i + 1}`, q, maxLength: el.maxLength > 0 ? el.maxLength : undefined };
+  function pending(el) {
+    const t = outlineTarget(el);
+    t.style.outline = `2px dashed ${COLORS.draft}`;
+    t.style.outlineOffset = '1px';
+  }
+
+  function askText(el, q) {
+    el.setAttribute('data-applylog-drafting', el.placeholder || '');
+    el.placeholder = 'ApplyLog: drafting an answer with Claude…';
+    pending(el);
+    report.asks.push({ el, q: tidy(q), maxLength: el.maxLength > 0 ? el.maxLength : undefined });
+  }
+
+  function askChoice(el, q, options, apply, stillEmpty) {
+    pending(el);
+    report.asks.push({ el, q: tidy(q), options, apply, stillEmpty });
+  }
+
+  /** Sends written and multiple-choice questions to Claude in one batch, then fills what comes back. */
+  async function draftAnswers(asks) {
+    const questions = asks.map((a, i) => {
+      a.id = `q${i + 1}`;
+      return a.options ? { id: a.id, q: a.q, options: a.options } : { id: a.id, q: a.q, maxLength: a.maxLength };
     });
     let res;
     try {
@@ -539,21 +574,28 @@
     } catch (e) {
       res = { ok: false, error: e.message };
     }
-    const byId = new Map(((res && res.answers) || []).map((a) => [a.id, a.text]));
-    for (const el of fields) {
-      setDrafting(el, false);
-      const text = byId.get(el.getAttribute('data-applylog-qid'));
-      el.removeAttribute('data-applylog-qid');
+    const byId = new Map(((res && res.answers) || []).map((a) => [a.id, clean(a.text) ? a.text : '']));
+    const why = (res && res.ok) ? 'Claude couldn\'t tell from your profile and resume' : `ApplyLog couldn't ask Claude: ${(res && res.error) || 'no answer returned'}`;
+    const done = (el, color, title) => { outlineTarget(el).style.outline = color ? `2px solid ${color}` : ''; el.title = title || ''; };
+    for (const a of asks) {
+      const text = byId.get(a.id);
+      if (a.options) {
+        const i = text ? a.options.findIndex((o) => norm(o) === norm(text)) : -1;
+        if (i >= 0 && a.stillEmpty()) {
+          a.apply(i);
+          done(a.el, COLORS.draft, `Picked by Claude from your profile and resume. Check it before submitting.`);
+        } else if (a.stillEmpty()) done(a.el, COLORS.missing, why);
+        else done(a.el, '');
+        continue;
+      }
+      const el = a.el;
+      el.placeholder = el.getAttribute('data-applylog-drafting') || '';
+      el.removeAttribute('data-applylog-drafting');
       if (text && !el.value.trim()) { // don't overwrite anything you typed meanwhile
         setValue(el, el.maxLength > 0 ? text.slice(0, el.maxLength) : text);
-        el.style.outline = `2px solid ${COLORS.draft}`;
-        el.title = 'Drafted by Claude from your resume and the job description. Read and edit before submitting.';
-      } else if (!el.value.trim()) {
-        el.style.outline = `2px solid ${COLORS.missing}`;
-        el.title = `ApplyLog couldn't draft this: ${(res && res.error) || 'no answer returned'}`;
-      } else {
-        el.style.outline = ''; // you answered it yourself
-      }
+        done(el, COLORS.draft, 'Drafted by Claude from your resume and the job description. Read and edit before submitting.');
+      } else if (!el.value.trim()) done(el, COLORS.missing, why);
+      else done(el, ''); // you answered it yourself
     }
   }
 
@@ -569,12 +611,12 @@
     RESUME = resume && resume.data ? resume : null;
     DRAFTS = drafts;
     PAGE_JOB = job && job.description ? job : null;
-    report = { filled: [], saved: [], missing: [], open: [] };
+    report = { filled: [], saved: [], missing: [], asks: [] };
     seen = new WeakSet();
     await pass();
-    const result = { ...report, drafting: report.open.map((el) => clean(questionFor(el)).replace(/[*✱]\s*$/, '').slice(0, 120)) };
-    delete result.open;
-    if (report.open.length) draftAnswers(report.open);
+    const result = { ...report, drafting: report.asks.map((a) => a.q.slice(0, 120)) };
+    delete result.asks;
+    if (report.asks.length) draftAnswers(report.asks);
 
     // Multi-step forms (Workday, LinkedIn Easy Apply) swap in new fields without
     // reloading. Keep filling fields we haven't seen for the next 30 minutes.
@@ -586,10 +628,10 @@
       timer = setTimeout(async () => {
         if (running) return;
         running = true;
-        report = { filled: [], saved: [], missing: [], open: [] };
+        report = { filled: [], saved: [], missing: [], asks: [] };
         try {
           await pass();
-          if (report.open.length) draftAnswers(report.open);
+          if (report.asks.length) draftAnswers(report.asks);
         } finally { running = false; }
       }, 800);
     });

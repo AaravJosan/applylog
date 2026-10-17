@@ -11,7 +11,7 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 - **No duplicates**: revisit a job you've already saved and the extension loads its row, so you can update status or referral instead of adding a new one.
 - **Ready-made sheet**: headers, frozen top row and dropdown menus are set up automatically.
 - **Autofill applications**: fill a whole application in one click: contact details, links, resume upload, education, work authorization, common screening questions and voluntary self-identification. Tested on Greenhouse, Lever and Ashby. Also built for Workday, LinkedIn Easy Apply, Handshake and plain HTML forms.
-- **Drafts written answers**: open-ended questions like "Why do you want to work here?" and cover letters are drafted by Claude from your resume, profile and the job description, using your own Claude subscription. Drafts are highlighted purple for you to review.
+- **Claude answers the rest**: open-ended questions like "Why do you want to work here?", required cover letters, and required multiple-choice questions your profile can't answer ("Will you graduate by June 2027?", "Preferred office?") are answered by Claude from your resume, profile and the job description, using your own Claude subscription. Its answers are highlighted purple for you to review. Work authorization, sponsorship, demographic, salary and consent questions are never sent to Claude.
 - **Learns your answers**: answer a company's custom question once, click **Remember my answers on this page**, and it's reused when a similar question comes up.
 
 ## Sheet columns
@@ -64,7 +64,7 @@ ApplyLog drafts open-ended answers through [Claude Code](https://claude.com/clau
 
 The helper is a small script (`native/host.js`, copied to `~/Library/Application Support/ApplyLog`) that Chrome starts only when ApplyLog asks for drafts. Only ApplyLog can talk to it. It runs `claude -p` with only the Read tool, in a temporary folder holding a copy of your resume, then deletes the folder. Re-run `install.sh` after updating ApplyLog.
 
-**What it costs:** nothing beyond your subscription. Each application makes one Claude call that drafts all of its written questions together. It sends about 10,000 tokens (your resume, profile and the job description) and gets back a few hundred words. That counts toward your plan's usage limits like a short Claude Code prompt, and takes about 20 to 60 seconds.
+**What it costs:** nothing beyond your subscription. Each application makes one Claude call that answers all of its open questions together. It sends about 10,000 tokens (your resume, profile and the job description) and gets back a few hundred words. That counts toward your plan's usage limits like a short Claude Code prompt, and takes about 20 to 60 seconds.
 
 This setup is for your own use on your own Mac. Anthropic doesn't allow apps you distribute to other people to run on their claude.ai logins, so a shared or published version of ApplyLog would need API keys instead.
 
@@ -82,12 +82,12 @@ This setup is for your own use on your own Mac. Anthropic doesn't allow apps you
 3. Check the highlighted fields:
    - **Green**: filled from your profile.
    - **Blue**: filled from a saved answer to a similar question. Double-check these.
-   - **Purple**: a written answer drafted by Claude (dashed while it's still drafting). Read it and make it yours.
-   - **Amber**: required and still empty. The popup lists them.
+   - **Purple**: answered by Claude, either a written draft or a choice picked from your profile and resume (dashed while it's still working). Read it and make it yours.
+   - **Amber**: required and still empty. Claude leaves a question amber when your profile and resume don't settle it, and never answers work authorization, sponsorship, self-identification, salary or consent questions. Set those in your profile.
 4. Answer the rest yourself, then click **Remember my answers on this page** so next time they fill too. You can edit saved answers in settings.
 5. Submit the application yourself. ApplyLog never submits.
 
-On multi-page forms (Workday, LinkedIn Easy Apply), it keeps filling each new page as you click **Next** for 30 minutes after you start.
+On multi-page forms that change pages without reloading (Workday, LinkedIn Easy Apply, Ashby), it keeps filling each new page as you click **Next**, including Claude's answers, for 30 minutes after you start. If a site loads a whole new page for each step, click **Autofill this application** again on each one.
 
 Written answers are drafted only when the drafting helper is set up (step 4) and **Draft written answers with Claude** is on in settings; otherwise those fields are flagged amber. Drafts never replace anything you've typed. Cover letters are drafted only when the form requires one; for an "Attach" or "Enter manually" cover letter, ApplyLog opens the text box first. The phone number's country code picker is filled from your profile's country (USA, US and UK work too), or from your phone number's +code if country is blank. Not filled automatically: consent and legal-acknowledgement checkboxes, and pages that need you to sign in first. Forms embedded from Greenhouse, Lever, Ashby or Workday inside a company's careers site (like Pinterest's) are filled in place. For an iframe from any other site, open that iframe in its own tab.
 

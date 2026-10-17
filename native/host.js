@@ -9,7 +9,7 @@
  * to a temporary folder holding your resume.
  *
  * Messages in:  { type: 'ping' }
- *               { type: 'draft', questions: [{ id, q, maxLength }], job: { title, company, url, description },
+ *               { type: 'draft', questions: [{ id, q, maxLength } | { id, q, options }], job: { title, company, url, description },
  *                 profile: {...}, resume: { name, type, data } }
  * Messages out: { ok: true, version, claude } | { ok: true, answers: [{ id, text }] } | { ok: false, error }
  */
@@ -80,7 +80,9 @@ Tailor each answer to this company and role using the job description: connect s
 
 Write plain text with no markdown, headings, bullet points or sign-off placeholders. Short answers run 80 to 180 words unless the question implies otherwise; a cover letter runs 200 to 350 words in three or four paragraphs. Never exceed a field's character limit when one is given.
 
-The candidate reviews and edits every draft before submitting, so make it specific and ready to use.`;
+Some questions are multiple choice and list their options. For those, answer with one option's exact text, copied character for character. Pick an option only when the profile or resume supports it: graduation date and degree for "will you graduate by…", the earliest start date for "can you start between…", the city for a preferred office, the resume's focus for a team or specialty. If nothing supports an answer, return an empty string for that id rather than guess.
+
+The candidate reviews and edits every answer before submitting, so make written answers specific and ready to use.`;
 
 const PROFILE_LABELS = {
   firstName: 'First name', lastName: 'Last name', pronouns: 'Pronouns', city: 'City', state: 'State', country: 'Country',
@@ -89,11 +91,15 @@ const PROFILE_LABELS = {
   relocate: 'Willing to relocate', inOffice: 'OK in office/hybrid'
 };
 
+const describe = (x) => x.options
+  ? `- id ${x.id} (multiple choice: ${x.options.map((o) => JSON.stringify(o)).join(' | ')}): ${x.q}`
+  : `- id ${x.id}: ${x.q}${x.maxLength ? ` (limit ${x.maxLength} characters)` : ''}`;
+
 function buildPrompt({ questions, job, profile }, resumeFile) {
   const prof = Object.entries(PROFILE_LABELS)
     .filter(([k]) => profile && profile[k])
     .map(([k, label]) => `${label}: ${profile[k]}`).join('\n');
-  const qs = questions.map((x) => `- id ${x.id}: ${x.q}${x.maxLength ? ` (limit ${x.maxLength} characters)` : ''}`).join('\n');
+  const qs = questions.map(describe).join('\n');
   return [
     resumeFile
       ? `The candidate's resume is in ${resumeFile}. Read it first.`
@@ -105,7 +111,7 @@ function buildPrompt({ questions, job, profile }, resumeFile) {
     job.description || '(No job description found on the page.)',
     '</job>',
     '',
-    'Draft an answer for each of these application questions:',
+    'Answer each of these application questions:',
     qs,
     '',
     'Return one answer per id through the structured output.'
