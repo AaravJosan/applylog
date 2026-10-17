@@ -76,6 +76,18 @@
     asian: /^asian\b/
   };
 
+  // Forms list countries by full name ("United States +1" in Greenhouse's phone country picker)
+  const COUNTRY_ALIASES = {
+    usa: 'United States', us: 'United States', 'u s': 'United States', 'u s a': 'United States', america: 'United States',
+    'united states of america': 'United States', uk: 'United Kingdom', 'u k': 'United Kingdom', britain: 'United Kingdom',
+    'great britain': 'United Kingdom', england: 'United Kingdom', uae: 'United Arab Emirates'
+  };
+  const DIAL_CODES = {
+    1: 'United States', 44: 'United Kingdom', 91: 'India', 61: 'Australia', 86: 'China', 49: 'Germany', 33: 'France',
+    81: 'Japan', 82: 'South Korea', 65: 'Singapore', 971: 'United Arab Emirates', 52: 'Mexico', 55: 'Brazil', 234: 'Nigeria',
+    92: 'Pakistan', 880: 'Bangladesh', 63: 'Philippines', 84: 'Vietnam', 353: 'Ireland', 31: 'Netherlands', 972: 'Israel'
+  };
+
   const LOCATION_KEYS = new Set(['location', 'city']);
   const STOP = new Set(['the', 'a', 'an', 'to', 'of', 'in', 'for', 'and', 'or', 'you', 'your', 'are', 'do', 'is',
     'this', 'with', 'our', 'we', 'be', 'have', 'at', 'on', 'if', 'please', 'optional', 'required']);
@@ -204,6 +216,16 @@
     const state = norm(P.state);
     const inCity = options.filter((o) => norm(o.text).startsWith(city));
     return inCity.find((o) => state && norm(o.text).includes(state)) || inCity[0] || null;
+  }
+
+  /** Your country as forms spell it; if it's blank, read it from your phone number's country code. */
+  function countryName(country, phone) {
+    const c = norm(country);
+    if (c) return COUNTRY_ALIASES[c] || country;
+    const digits = (phone || '').replace(/[^\d+]/g, '');
+    const code = (digits.match(/^\+(\d{1,3})/) || [])[1];
+    if (code) for (let n = code.length; n >= 1; n--) if (DIAL_CODES[code.slice(0, n)]) return DIAL_CODES[code.slice(0, n)];
+    return /^\d{10}$/.test(digits) ? 'United States' : '';
   }
 
   // ---------- Setting values in a way frameworks notice ----------
@@ -363,6 +385,7 @@
         const group = b.closest('[role=group], .field-wrapper, fieldset');
         const file = group && group.querySelector('input[type=file]');
         if (!group || !/cover letter/i.test(textOf(group)) || (file && file.files.length) || group.querySelector('textarea')) continue;
+        if (group.getAttribute('aria-required') !== 'true' && !/cover letter\s*[*✱]/i.test(textOf(group))) continue; // optional: skip it
         press(b);
         await waitFor(() => group.querySelector('textarea'), 1500);
       }
@@ -442,6 +465,7 @@
   function isOpenEnded(el, question) {
     if (!question || el.hasAttribute('data-applylog-drafting') || ruleFor(norm(question))) return false;
     if (el.tagName === 'INPUT' && !['text', ''].includes((el.getAttribute('type') || '').toLowerCase())) return false;
+    if (/cover letter/i.test(question) && !isRequired(el, question)) return false; // only when they ask for one
     return el.tagName === 'TEXTAREA' || OPEN_ENDED.test(question);
   }
 
@@ -540,6 +564,7 @@
     P.fullName = [P.firstName, P.lastName].filter(Boolean).join(' ');
     P.preferredName = P.preferredName || P.firstName;
     P.location = [P.city, P.state].filter(Boolean).join(', ');
+    P.country = countryName(P.country, P.phone);
     LIB = answers;
     RESUME = resume && resume.data ? resume : null;
     DRAFTS = drafts;
