@@ -291,9 +291,14 @@ $('autofillBtn').addEventListener('click', async () => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const target = await injectAutofill(tab.id);
+    // Embedded forms (a Greenhouse iframe on a company careers site) can't see the
+    // job description around them, so read it from the top page and pass it in
+    const [{ result: job }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id }, func: () => window.__applylog && window.__applylog.job()
+    });
     const results = await chrome.scripting.executeScript({
       target, func: (data) => window.__applylog && window.__applylog.fill(data),
-      args: [{ profile, answers, resume, drafts: draftsEnabled }]
+      args: [{ profile, answers, resume, drafts: draftsEnabled, job }]
     });
     const filled = [], saved = [], missing = [], drafting = [];
     for (const { result } of results) {
@@ -304,7 +309,7 @@ $('autofillBtn').addEventListener('click', async () => {
       drafting.push(...(result.drafting || []));
     }
     const total = filled.length + saved.length;
-    let text = total ? `✓ Filled ${total} field${total === 1 ? '' : 's'}` : 'No matching empty fields found.';
+    let text = total ? `✓ Filled ${total} field${total === 1 ? '' : 's'}` : 'No matching empty fields found';
     if (saved.length) text += ` (${saved.length} from saved answers, in blue)`;
     if (missing.length) text += `. Still needs you: ${missing.slice(0, 4).join('; ')}${missing.length > 4 ? ` +${missing.length - 4} more` : ''}`;
     if (drafting.length) text += `. Drafting ${drafting.length} written answer${drafting.length === 1 ? '' : 's'} with Claude (purple when ready, about 30 seconds; you can close this)`;

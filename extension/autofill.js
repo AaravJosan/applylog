@@ -95,6 +95,7 @@
   let LIB = [];
   let RESUME = null;
   let DRAFTS = false;
+  let PAGE_JOB = null; // job details from the top page, when this form is in an iframe
   let report = null;
   let seen = new WeakSet();
   let observer = null;
@@ -117,6 +118,9 @@
       // Labels and aria-label often repeat each other; keep each piece once
       const unique = [...new Set(parts.map(clean).filter(Boolean))];
       const t = unique.filter((x) => !unique.some((y) => y !== x && norm(y).includes(norm(x)))).join(' ');
+      // Greenhouse's typed cover letter is labelled "Enter manually"; the question is the group's label
+      const group = /^enter manually$/i.test(t) && el.closest('[role=group][aria-labelledby]');
+      if (group) return textOf(document.getElementById(group.getAttribute('aria-labelledby'))).slice(0, 250);
       if (t) return t.slice(0, 250);
     }
     const box = el.closest(CONTAINERS);
@@ -352,6 +356,18 @@
       await sleep(60);
     }
 
+    // Cover letters offered as "attach or enter manually": open the text box so it gets drafted
+    if (DRAFTS) {
+      for (const b of document.querySelectorAll('button')) {
+        if (!/^enter manually$/i.test(textOf(b)) || !fresh(b)) continue;
+        const group = b.closest('[role=group], .field-wrapper, fieldset');
+        const file = group && group.querySelector('input[type=file]');
+        if (!group || !/cover letter/i.test(textOf(group)) || (file && file.files.length) || group.querySelector('textarea')) continue;
+        press(b);
+        await waitFor(() => group.querySelector('textarea'), 1500);
+      }
+    }
+
     // Plain text boxes and native dropdowns
     const SKIP = ['hidden', 'file', 'submit', 'button', 'reset', 'image', 'password', 'checkbox', 'radio', 'search'];
     for (const el of document.querySelectorAll('input, textarea, select')) {
@@ -493,7 +509,9 @@
     });
     let res;
     try {
-      res = await chrome.runtime.sendMessage({ type: 'draft', questions, job: jobContext() });
+      let job = jobContext();
+      if (PAGE_JOB && PAGE_JOB.description.length > job.description.length) job = PAGE_JOB;
+      res = await chrome.runtime.sendMessage({ type: 'draft', questions, job });
     } catch (e) {
       res = { ok: false, error: e.message };
     }
@@ -517,7 +535,7 @@
 
   // ---------- Public API ----------
 
-  async function fill({ profile = {}, answers = [], resume = null, drafts = false }) {
+  async function fill({ profile = {}, answers = [], resume = null, drafts = false, job = null }) {
     P = { ...profile };
     P.fullName = [P.firstName, P.lastName].filter(Boolean).join(' ');
     P.preferredName = P.preferredName || P.firstName;
@@ -525,6 +543,7 @@
     LIB = answers;
     RESUME = resume && resume.data ? resume : null;
     DRAFTS = drafts;
+    PAGE_JOB = job && job.description ? job : null;
     report = { filled: [], saved: [], missing: [], open: [] };
     seen = new WeakSet();
     await pass();
@@ -587,5 +606,5 @@
     return [...out.values()];
   }
 
-  window.__applylog = { fill, capture };
+  window.__applylog = { fill, capture, job: jobContext };
 })();
