@@ -10,7 +10,8 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 - **Find connections fast**: one button opens a LinkedIn search for your 1st-degree connections at that company.
 - **No duplicates**: revisit a job you've already saved and the extension loads its row, so you can update status or referral instead of adding a new one.
 - **Ready-made sheet**: headers, frozen top row and dropdown menus are set up automatically.
-- **Autofill applications**: save your name, contact info, links, address, education and work-authorization answers once, then fill application forms with one click.
+- **Autofill applications**: fill a whole application in one click: contact details, links, resume upload, education, work authorization, common screening questions and voluntary self-identification. Tested on Greenhouse, Lever and Ashby. Also built for Workday, LinkedIn Easy Apply, Handshake and plain HTML forms.
+- **Learns your answers**: answer a company's custom question once, click **Remember my answers on this page**, and it's reused when a similar question comes up.
 
 ## Sheet columns
 
@@ -57,11 +58,18 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 
 ### Autofilling an application
 
-1. In ⚙ settings, fill in **Autofill profile** and click **Save profile**. It's stored only in this browser and never sent to your sheet.
+1. In ⚙ settings, fill in **Autofill profile**: your details, resume, common questions and (optionally) self-identification answers. Click **Save profile**. Everything stays in this browser and is never sent to your sheet.
 2. On an application form, open ApplyLog and click **Autofill this application**.
-3. Filled fields get a green outline. Check them, attach your resume, and submit yourself.
+3. Check the highlighted fields:
+   - **Green**: filled from your profile.
+   - **Blue**: filled from a saved answer to a similar question. Double-check these.
+   - **Amber**: required and still empty. The popup lists them.
+4. Answer the rest yourself, then click **Remember my answers on this page** so next time they fill too. You can edit saved answers in settings.
+5. Submit the application yourself. ApplyLog never submits.
 
-Autofill only fills empty fields and never submits. Custom dropdown widgets (like Workday's) and file uploads aren't filled. If the form sits in an iframe from another site, open that iframe in its own tab first.
+On multi-page forms (Workday, LinkedIn Easy Apply), it keeps filling each new page as you click **Next** for 30 minutes after you start.
+
+Not filled automatically: open-ended questions ("Why do you want to work here?"), cover letters, consent and legal-acknowledgement checkboxes, and pages that need you to sign in first. If a form sits in an iframe from another site, open that iframe in its own tab.
 
 Come back to the same posting later and the extension shows your saved tracking info, ready to update.
 
@@ -70,7 +78,9 @@ Come back to the same posting later and the extension shows your saved tracking 
 ```
 extension/
   manifest.json      Chrome extension config (Manifest V3)
-  popup.html/css/js  The popup form, job-detail scraping and autofill
+  popup.html/css/js  The popup form and job-detail scraping
+  autofill.js        Fills application forms (runs in the extension's isolated world)
+  bridge.js          Small page-side helper for React dropdowns
   options.html/js    Settings page
   icons/
 apps-script/
@@ -80,7 +90,7 @@ apps-script/
 ## Notes
 
 - Job sites change their page layouts often. If a field stops auto-filling on a site, the selectors live in `extractJob()` in `popup.js`.
-- Application autofill matches fields by label, name, id and placeholder using the `RULES` list in `autofillPage()` in `popup.js`. Add a pattern there if a form's field isn't recognised.
+- Application autofill matches each question to a profile field using the `RULES` list in `autofill.js`, then falls back to your saved answers. Add a pattern there if a common question isn't recognised.
 - After editing `Code.gs`, publish a new version: **Deploy → Manage deployments → Edit → Version: New version**.
 
 ## Tech

@@ -13,6 +13,16 @@
     .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .secondary { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink);
       font: 600 14px system-ui, sans-serif; cursor: pointer; }
+    .hint { color: var(--ink-2); font-size: 12px; margin: 0 0 8px; }
+    .answers { list-style: none; padding: 0; margin: 0 0 10px; }
+    .answers li { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+    .answers li:last-child { border-bottom: 0; }
+    .answers .q { color: var(--ink-2); font-size: 12px; }
+    .answers .a { font-weight: 600; }
+    .answers button { background: none; border: 0; color: var(--ink-2); font-size: 16px; cursor: pointer; }
+    .answers .empty { color: var(--ink-2); display: block; }
+    .add-answer { grid-template-columns: 1fr 1fr auto; align-items: end; }
+    .add-answer .secondary { margin-bottom: 7px; padding: 7px 12px; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -110,9 +120,78 @@
       </div>
     </section>
 
+    <section>
+      <h2>Resume</h2>
+      <label>Uploaded to applications automatically (PDF or Word, under 5 MB)
+        <input id="resumeFile" type="file" accept=".pdf,.doc,.docx,.txt,.rtf">
+      </label>
+      <div id="resumeInfo" class="hint"></div>
+    </section>
+
+    <section>
+      <h2>Common questions</h2>
+      <div class="row">
+        <label>18 or older?
+          <select name="over18"><option value="">Don't fill</option><option>Yes</option><option>No</option></select>
+        </label>
+        <label>Willing to relocate?
+          <select name="relocate"><option value="">Don't fill</option><option>Yes</option><option>No</option></select>
+        </label>
+      </div>
+      <div class="row">
+        <label>OK working in office / hybrid?
+          <select name="inOffice"><option value="">Don't fill</option><option>Yes</option><option>No</option></select>
+        </label>
+        <label>How did you hear about us?<input name="howHeard" placeholder="LinkedIn"></label>
+      </div>
+      <div class="row">
+        <label>Earliest start date<input name="startDate" placeholder="June 2027"></label>
+        <label>Salary expectation<input name="salary" placeholder="Optional"></label>
+      </div>
+      <label>Preferred first name<input name="preferredName" placeholder="If different from first name"></label>
+    </section>
+
+    <section>
+      <h2>Voluntary self-identification</h2>
+      <p class="hint">Optional. Leave as "Don't fill" to answer these yourself each time.</p>
+      <div class="row">
+        <label>Gender
+          <select name="gender"><option value="">Don't fill</option><option>Male</option><option>Female</option><option>Non-binary</option><option>Decline</option></select>
+        </label>
+        <label>Hispanic or Latino?
+          <select name="hispanic"><option value="">Don't fill</option><option>Yes</option><option>No</option><option>Decline</option></select>
+        </label>
+      </div>
+      <label>Race
+        <select name="race"><option value="">Don't fill</option><option>American Indian or Alaska Native</option><option>Asian</option>
+          <option>Black or African American</option><option>Native Hawaiian or Other Pacific Islander</option><option>White</option>
+          <option>Two or More Races</option><option>Decline</option></select>
+      </label>
+      <div class="row">
+        <label>Veteran status
+          <select name="veteran"><option value="">Don't fill</option><option>Not a protected veteran</option><option>Protected veteran</option><option>Decline</option></select>
+        </label>
+        <label>Disability
+          <select name="disability"><option value="">Don't fill</option><option>No</option><option>Yes</option><option>Decline</option></select>
+        </label>
+      </div>
+    </section>
+
     <button type="submit" class="primary">Save profile</button>
     <div id="profileMsg" class="msg" role="status" aria-live="polite"></div>
   </form>
+
+  <h1 style="margin-top: 32px">Saved answers</h1>
+  <p class="sub">Answers to other questions, reused when a similar question comes up (filled fields show in blue).
+    Add them here, or answer a form yourself and click <b>Remember my answers on this page</b> in the popup.</p>
+  <section>
+    <ul id="answerList" class="answers"></ul>
+    <form id="answerForm" class="row add-answer">
+      <label>Question<input id="newQ" placeholder="Have you worked here before?" required></label>
+      <label>Answer<input id="newA" placeholder="No" required></label>
+      <button type="submit" class="secondary">Add answer</button>
+    </form>
+  </section>
 
   <script src="options.js"></script>
 </body>

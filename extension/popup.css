@@ -56,3 +56,4 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .secondary:hover { border-color: var(--accent); }
 .secondary:disabled { opacity: .6; cursor: wait; }
 #autofillMsg { margin: 4px 0 6px; min-height: 0; }
+.remember { display: block; margin: 0 auto 10px; font-size: 12px; color: var(--ink-2); }

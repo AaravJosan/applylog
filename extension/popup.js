@@ -259,177 +259,72 @@ $('jobForm').addEventListener('submit', async (e) => {
   }
 });
 
-/**
- * Runs inside the application page (every frame we can reach). Must be fully
- * self-contained. Fills empty fields whose label/name/id/placeholder matches a
- * profile entry. Never overwrites what's already typed and never submits.
- */
-function autofillPage(profile) {
-  const p = { ...profile };
-  p.fullName = [p.firstName, p.lastName].filter(Boolean).join(' ');
-  p.location = [p.city, p.state].filter(Boolean).join(', ');
-
-  // Order matters: specific rules first, so "company name" never hits the name rule
-  const RULES = [
-    ['email', /e-?mail/],
-    ['linkedin', /linked ?in/],
-    ['github', /git ?hub/],
-    ['website', /portfolio|website|personal (site|url)|\bblog\b/],
-    ['workAuth', /authori[sz]ed to work|work authori[sz]ation|eligible to work|right to work/],
-    ['sponsorship', /sponsor/],
-    ['currentCompany', /current (company|employer)|most recent (company|employer)|\bemployer\b|\borganization\b/],
-    ['currentTitle', /current (job )?(title|role|position)|most recent (title|role)|\bjob title\b|organization title/],
-    ['school', /school|universit|college|institution/],
-    ['degree', /\bdegree\b/],
-    ['major', /\bmajor\b|discipline|field of study|area of study/],
-    ['gradDate', /graduat/],
-    ['firstName', /first name|given name|fname|preferred name/],
-    ['lastName', /last name|family name|surname|lname/],
-    ['fullName', /full name|legal name|your name|^name$/],
-    ['phone', /phone|mobile|\btel\b|cell/],
-    ['pronouns', /pronoun/],
-    ['zip', /\bzip\b|postal|post code|postcode/],
-    ['city', /\bcity\b|\btown\b|address level2/],
-    ['state', /\bstate\b|province|region|address level1/],
-    ['country', /country/],
-    ['address', /street|address line ?1|^address$|\baddress$/],
-    ['location', /location/],
-    ['website', /\burl\b/]
-  ];
-
-  const norm = (s) => (s || '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-\[\].:*?()]+/g, ' ')
-    .replace(/\s+/g, ' ').trim().toLowerCase();
-  const textOf = (el) => (el ? el.textContent : '');
-
-  function labelFor(el) {
-    const parts = [];
-    if (el.labels) for (const l of el.labels) parts.push(textOf(l));
-    const ids = el.getAttribute('aria-labelledby');
-    if (ids) for (const id of ids.split(/\s+/)) parts.push(textOf(document.getElementById(id)));
-    if (parts.join('').trim()) return parts.join(' ');
-    // Fall back to the nearest container that holds only this field
-    let node = el.parentElement;
-    for (let i = 0; node && i < 4; i++, node = node.parentElement) {
-      const fields = node.querySelectorAll('input:not([type=hidden]), select, textarea');
-      const others = [...fields].filter((f) => f !== el && !(el.type === 'radio' && f.name === el.name));
-      if (others.length) break;
-      const lab = node.querySelector('label, legend, [class*="label" i], [class*="question" i]');
-      if (lab && textOf(lab).trim()) return textOf(lab);
+async function injectAutofill(tabId) {
+  // Many application forms (e.g. Greenhouse embeds) live in an iframe; fall back to the top frame
+  for (const allFrames of [true, false]) {
+    try {
+      const target = { tabId, allFrames };
+      await chrome.scripting.executeScript({ target, files: ['bridge.js'], world: 'MAIN' });
+      await chrome.scripting.executeScript({ target, files: ['autofill.js'] });
+      return target;
+    } catch (e) {
+      if (!allFrames) throw e;
     }
-    return '';
   }
+}
 
-  function keyFor(el) {
-    const ac = (el.getAttribute('autocomplete') || '').toLowerCase();
-    const byAc = { 'given-name': 'firstName', 'family-name': 'lastName', name: 'fullName', email: 'email',
-      tel: 'phone', 'tel-national': 'phone', 'address-line1': 'address', 'street-address': 'address',
-      'address-level2': 'city', 'address-level1': 'state', 'postal-code': 'zip', 'country-name': 'country',
-      country: 'country', organization: 'currentCompany', 'organization-title': 'currentTitle' }[ac.split(' ').pop()];
-    if (byAc) return byAc;
-    const label = norm(labelFor(el)).slice(0, 200);
-    // The visible label is the most trustworthy signal; try it alone first
-    const candidates = [label, norm([el.getAttribute('aria-label'), el.placeholder, el.name, el.id].join(' '))];
-    for (const text of candidates) {
-      if (!text) continue;
-      for (const [key, re] of RULES) if (re.test(text)) return key;
-    }
-    return null;
-  }
-
-  const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
-
-  // Set values through the native setter so React/Vue forms notice the change
-  function setValue(el, value) {
-    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
-      : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
-    for (const type of ['input', 'change', 'blur']) el.dispatchEvent(new Event(type, { bubbles: true }));
-  }
-
-  function pickOption(options, value) {
-    const v = value.toLowerCase();
-    const label = (o) => norm(o.text || o.label || o.value);
-    return options.find((o) => label(o) === v || (o.value || '').toLowerCase() === v)
-      || options.find((o) => new RegExp('^' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(label(o)))
-      || (v.length > 2 && options.find((o) => label(o).includes(v)));
-  }
-
-  const highlight = (el) => { el.style.outline = '2px solid #34a853'; el.style.outlineOffset = '1px'; };
-  const filled = [];
-  const doneRadioGroups = new Set();
-
-  for (const el of document.querySelectorAll('input, textarea, select')) {
-    const type = (el.type || '').toLowerCase();
-    if (el.disabled || el.readOnly || !visible(el)) continue;
-    if (['hidden', 'file', 'submit', 'button', 'reset', 'image', 'password', 'checkbox', 'search'].includes(type)) continue;
-
-    if (type === 'radio') {
-      if (!el.name || doneRadioGroups.has(el.name)) continue;
-      doneRadioGroups.add(el.name);
-      const group = [...document.querySelectorAll(`input[type=radio][name="${CSS.escape(el.name)}"]`)];
-      if (group.some((r) => r.checked)) continue;
-      // The question is the text of the smallest container holding the whole group
-      let box = el.closest('fieldset, [role=radiogroup]') || el.parentElement;
-      while (box && !group.every((r) => box.contains(r))) box = box.parentElement;
-      while (box && box.parentElement && norm(textOf(box)).length < 15 + group.length * 4) box = box.parentElement;
-      const legend = box && box.querySelector('legend');
-      const question = norm(legend ? textOf(legend) : textOf(box)).slice(0, 300);
-      const key = RULES.find(([, re]) => re.test(question));
-      const value = key && p[key[0]];
-      if (!value) continue;
-      const choice = pickOption(group.map((r) => ({ el: r, text: [...(r.labels || [])].map(textOf).join(' '), value: r.value })), value);
-      if (choice) { choice.el.click(); highlight(choice.el); filled.push(key[0]); }
-      continue;
-    }
-
-    const key = keyFor(el);
-    const value = key && p[key];
-    if (!value) continue;
-
-    if (el.tagName === 'SELECT') {
-      if (el.value && el.selectedIndex > 0) continue;
-      const opt = pickOption([...el.options], value);
-      if (!opt) continue;
-      setValue(el, opt.value);
-    } else {
-      if (el.value.trim()) continue;
-      setValue(el, value);
-    }
-    highlight(el);
-    filled.push(key);
-  }
-  return filled;
+function showAutofillMsg(text, type = '') {
+  $('autofillMsg').textContent = text;
+  $('autofillMsg').className = `msg ${type}`;
 }
 
 $('autofillBtn').addEventListener('click', async () => {
-  const msg = $('autofillMsg');
-  const { profile } = await chrome.storage.local.get('profile');
-  if (!profile || !Object.values(profile).some(Boolean)) {
-    msg.textContent = 'Add your details under ⚙ Settings → Autofill profile first.';
-    msg.className = 'msg err';
+  const { profile = {}, answers = [], resume = null } = await chrome.storage.local.get(['profile', 'answers', 'resume']);
+  if (!Object.values(profile).some(Boolean)) {
+    showAutofillMsg('Add your details under ⚙ Settings → Autofill profile first.', 'err');
     return;
   }
   const btn = $('autofillBtn');
   btn.disabled = true;
+  showAutofillMsg('Filling…');
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    let results;
-    try {
-      // Many application forms (e.g. Greenhouse embeds) live in an iframe
-      results = await chrome.scripting.executeScript({ target: { tabId: tab.id, allFrames: true }, func: autofillPage, args: [profile] });
-    } catch (e) {
-      results = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: autofillPage, args: [profile] });
+    const target = await injectAutofill(tab.id);
+    const results = await chrome.scripting.executeScript({
+      target, func: (data) => window.__applylog && window.__applylog.fill(data), args: [{ profile, answers, resume }]
+    });
+    const filled = [], saved = [], missing = [];
+    for (const { result } of results) {
+      if (!result) continue;
+      filled.push(...result.filled);
+      saved.push(...result.saved);
+      missing.push(...result.missing);
     }
-    const filled = results.flatMap((r) => r.result || []);
-    msg.textContent = filled.length
-      ? `✓ Filled ${filled.length} field${filled.length === 1 ? '' : 's'}. Review them before submitting.`
-      : 'No matching empty fields found on this page.';
-    msg.className = filled.length ? 'msg ok' : 'msg';
+    const total = filled.length + saved.length;
+    let text = total ? `✓ Filled ${total} field${total === 1 ? '' : 's'}` : 'No matching empty fields found.';
+    if (saved.length) text += ` (${saved.length} from saved answers, in blue)`;
+    if (missing.length) text += `. Still needs you: ${missing.slice(0, 4).join('; ')}${missing.length > 4 ? ` +${missing.length - 4} more` : ''}`;
+    showAutofillMsg(text + '. Review before submitting.', total ? 'ok' : '');
   } catch (err) {
-    msg.textContent = 'Can’t fill this page.';
-    msg.className = 'msg err';
+    showAutofillMsg('Can’t fill this page.', 'err');
   } finally {
     btn.disabled = false;
+  }
+});
+
+$('rememberBtn').addEventListener('click', async () => {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const target = await injectAutofill(tab.id);
+    const results = await chrome.scripting.executeScript({ target, func: () => window.__applylog && window.__applylog.capture() });
+    const found = results.flatMap((r) => r.result || []);
+    const { answers = [] } = await chrome.storage.local.get('answers');
+    const byQuestion = new Map(answers.map((x) => [x.q.toLowerCase(), x]));
+    for (const x of found) byQuestion.set(x.q.toLowerCase(), x);
+    await chrome.storage.local.set({ answers: [...byQuestion.values()] });
+    showAutofillMsg(found.length ? `✓ Saved ${found.length} answer${found.length === 1 ? '' : 's'} for next time` : 'No new answers to save on this page.', found.length ? 'ok' : '');
+  } catch (err) {
+    showAutofillMsg('Can’t read this page.', 'err');
   }
 });
 
