@@ -45,3 +45,22 @@ $('testBtn').addEventListener('click', async () => {
 });
 
 load();
+
+// Autofill profile: kept in storage.local (this device only), never sent to the sheet
+const profileForm = $('profileForm');
+
+async function loadProfile() {
+  const { profile = {} } = await chrome.storage.local.get('profile');
+  for (const el of profileForm.elements) if (el.name && profile[el.name]) el.value = profile[el.name];
+}
+
+profileForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const profile = {};
+  for (const el of profileForm.elements) if (el.name) profile[el.name] = el.value.trim();
+  await chrome.storage.local.set({ profile });
+  $('profileMsg').textContent = '✓ Profile saved';
+  $('profileMsg').className = 'msg ok';
+});
+
+loadProfile();

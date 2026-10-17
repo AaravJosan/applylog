@@ -10,6 +10,7 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 - **Find connections fast**: one button opens a LinkedIn search for your 1st-degree connections at that company.
 - **No duplicates**: revisit a job you've already saved and the extension loads its row, so you can update status or referral instead of adding a new one.
 - **Ready-made sheet**: headers, frozen top row and dropdown menus are set up automatically.
+- **Autofill applications**: save your name, contact info, links, address, education and work-authorization answers once, then fill application forms with one click.
 
 ## Sheet columns
 
@@ -54,6 +55,14 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 3. Set your status, LinkedIn connection and referral, and add notes.
 4. Click **Add to sheet**.
 
+### Autofilling an application
+
+1. In ⚙ settings, fill in **Autofill profile** and click **Save profile**. It's stored only in this browser and never sent to your sheet.
+2. On an application form, open ApplyLog and click **Autofill this application**.
+3. Filled fields get a green outline. Check them, attach your resume, and submit yourself.
+
+Autofill only fills empty fields and never submits. Custom dropdown widgets (like Workday's) and file uploads aren't filled. If the form sits in an iframe from another site, open that iframe in its own tab first.
+
 Come back to the same posting later and the extension shows your saved tracking info, ready to update.
 
 ## Project structure
@@ -61,7 +70,7 @@ Come back to the same posting later and the extension shows your saved tracking 
 ```
 extension/
   manifest.json      Chrome extension config (Manifest V3)
-  popup.html/css/js  The popup form and job-detail scraping
+  popup.html/css/js  The popup form, job-detail scraping and autofill
   options.html/js    Settings page
   icons/
 apps-script/
@@ -71,6 +80,7 @@ apps-script/
 ## Notes
 
 - Job sites change their page layouts often. If a field stops auto-filling on a site, the selectors live in `extractJob()` in `popup.js`.
+- Application autofill matches fields by label, name, id and placeholder using the `RULES` list in `autofillPage()` in `popup.js`. Add a pattern there if a form's field isn't recognised.
 - After editing `Code.gs`, publish a new version: **Deploy → Manage deployments → Edit → Version: New version**.
 
 ## Tech

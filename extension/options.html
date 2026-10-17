@@ -45,6 +45,75 @@
     <div id="msg" class="msg" role="status" aria-live="polite"></div>
   </form>
 
+  <h1 style="margin-top: 32px">Autofill profile</h1>
+  <p class="sub">Used by <b>Autofill this application</b> in the popup. Stored only in this browser, never sent to your sheet.</p>
+
+  <form id="profileForm" autocomplete="on">
+    <section>
+      <h2>About you</h2>
+      <div class="row">
+        <label>First name<input name="firstName" autocomplete="given-name"></label>
+        <label>Last name<input name="lastName" autocomplete="family-name"></label>
+      </div>
+      <div class="row">
+        <label>Email<input name="email" type="email" autocomplete="email"></label>
+        <label>Phone<input name="phone" type="tel" autocomplete="tel"></label>
+      </div>
+      <label>Pronouns<input name="pronouns" placeholder="Optional"></label>
+    </section>
+
+    <section>
+      <h2>Links</h2>
+      <label>LinkedIn<input name="linkedin" type="url" placeholder="https://www.linkedin.com/in/…"></label>
+      <div class="row">
+        <label>GitHub<input name="github" type="url" placeholder="https://github.com/…"></label>
+        <label>Website / portfolio<input name="website" type="url"></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Address</h2>
+      <label>Street address<input name="address" autocomplete="address-line1"></label>
+      <div class="row">
+        <label>City<input name="city" autocomplete="address-level2"></label>
+        <label>State / region<input name="state" autocomplete="address-level1"></label>
+      </div>
+      <div class="row">
+        <label>ZIP / postal code<input name="zip" autocomplete="postal-code"></label>
+        <label>Country<input name="country" autocomplete="country-name"></label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Education</h2>
+      <label>School<input name="school" placeholder="University of …"></label>
+      <div class="row">
+        <label>Degree<input name="degree" placeholder="Bachelor's"></label>
+        <label>Major<input name="major" placeholder="Computer Science"></label>
+      </div>
+      <label>Graduation date<input name="gradDate" placeholder="May 2027"></label>
+    </section>
+
+    <section>
+      <h2>Work</h2>
+      <div class="row">
+        <label>Current company<input name="currentCompany"></label>
+        <label>Current title<input name="currentTitle"></label>
+      </div>
+      <div class="row">
+        <label>Authorized to work?
+          <select name="workAuth"><option value="">Don't fill</option><option>Yes</option><option>No</option></select>
+        </label>
+        <label>Need visa sponsorship?
+          <select name="sponsorship"><option value="">Don't fill</option><option>Yes</option><option>No</option></select>
+        </label>
+      </div>
+    </section>
+
+    <button type="submit" class="primary">Save profile</button>
+    <div id="profileMsg" class="msg" role="status" aria-live="polite"></div>
+  </form>
+
   <script src="options.js"></script>
 </body>
 </html>
