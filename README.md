@@ -11,7 +11,7 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 - **No duplicates**: revisit a job you've already saved and the extension loads its row, so you can update status or referral instead of adding a new one.
 - **Ready-made sheet**: headers, frozen top row and dropdown menus are set up automatically.
 - **Autofill applications**: fill a whole application in one click: contact details, links, resume upload, education, work authorization, common screening questions and voluntary self-identification. Tested on Greenhouse, Lever and Ashby. Also built for Workday, LinkedIn Easy Apply, Handshake and plain HTML forms.
-- **Claude answers the rest**: open-ended questions like "Why do you want to work here?", required cover letters, and required multiple-choice questions your profile can't answer ("Will you graduate by June 2027?", "Preferred office?") are answered by Claude from your resume, profile and the job description, using your own Claude subscription. Its answers are highlighted purple for you to review. Work authorization, sponsorship, demographic, salary and consent questions are never sent to Claude.
+- **Claude answers the rest**: every question your profile doesn't settle goes to Claude in one batch, with your resume, profile and the job description, using your own Claude subscription. That covers written answers ("Why do you want to work here?", required cover letters), dropdowns, radio buttons, Yes/No buttons, select-all-that-apply checkboxes and multi-selects ("Will you graduate by June 2027?", "Preferred office?", "Which languages?"), and short fields like GPA, graduation date or a portfolio link. Its answers are highlighted purple for you to review. Work authorization, sponsorship, demographic and salary questions are answered only from what you set in your profile (Claude may match your answer to the form's wording, but never guesses one), and consent checkboxes are always left for you.
 - **Learns your answers**: answer a company's custom question once, click **Remember my answers on this page**, and it's reused when a similar question comes up.
 
 ## Sheet columns
@@ -83,7 +83,7 @@ This setup is for your own use on your own Mac. Anthropic doesn't allow apps you
    - **Green**: filled from your profile.
    - **Blue**: filled from a saved answer to a similar question. Double-check these.
    - **Purple**: answered by Claude, either a written draft or a choice picked from your profile and resume (dashed while it's still working). Read it and make it yours.
-   - **Amber**: required and still empty. Claude leaves a question amber when your profile and resume don't settle it, and never answers work authorization, sponsorship, self-identification, salary or consent questions. Set those in your profile.
+   - **Amber**: required and still empty. Claude leaves a question amber when your profile and resume don't settle it (it won't invent a username or ID). Work authorization, sponsorship, self-identification and salary questions stay amber until you set them in your profile, and consent checkboxes are always yours to tick. Fill in your whole profile once and most applications need nothing from you but a review.
 4. Answer the rest yourself, then click **Remember my answers on this page** so next time they fill too. You can edit saved answers in settings.
 5. Submit the application yourself. ApplyLog never submits.
 

@@ -40,6 +40,8 @@
     ['school', /school|universit|college|institution/],
     ['degree', /\bdegree\b/],
     ['major', /\bmajor\b|discipline|field of study|area of study/],
+    ['gradMonth', /graduation month|month (of|you) (will )?graduat/],
+    ['gradYear', /graduation year|year (of|you) (will )?graduat|\bclass of\b/],
     ['gradDate', /graduat/],
     ['preferredName', /preferred (first )?name|nickname/],
     ['firstName', /first name|given name|\bfname\b/],
@@ -104,7 +106,8 @@
 
   // Never guessed by Claude: legal status, demographics and money stay yours to answer
   const NEVER_ASK = new Set(['workAuth', 'sponsorship', 'over18', 'gender', 'hispanic', 'race', 'veteran', 'disability', 'pronouns', 'salary']);
-  const NEVER_ASK_TEXT = /acknowledg|consent|certif|attest|\bagree|privacy|criminal|convict|felony|background check|signature/i;
+  const NEVER_ASK_TEXT = /acknowledg|consent|certif|attest|\bagree|privacy|criminal|convict|felony|background check|signature|lgbt|sexual orientation|transgender|gender identity|ethnicit|\brace\b|disabilit|veteran|religio/i;
+  const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
   // Questions worth a written answer rather than a lookup
   const OPEN_ENDED = /\bwhy\b|tell (us|me)|describe|cover letter|explain|what (excites|interests|motivates|draws|attracts)|share (a|an|with|about|your)|about yourself|anything else|additional information|elaborate/i;
@@ -211,6 +214,11 @@
     };
     const exact = options.find((o) => lab(o) === v || norm(o.value) === v);
     if (exact) return exact;
+    // "BS", "B.S. Computer Science", "Bachelor of Science" all mean the "Bachelor's" option
+    const level = /^(b ?s|b ?a|b ?sc|b ?eng|b ?tech|bachelor)\b/.test(v) ? /bachelor/
+      : /^(m ?s|m ?a|m ?sc|m ?eng|mba|master)\b/.test(v) ? /master/
+        : /^(ph ?d|doctor)/.test(v) ? /ph ?d|doctor/ : null;
+    if (level) { const d = options.filter((o) => level.test(lab(o))); if (d.length === 1) return d[0]; }
     if (syn) { const s = options.find((o) => syn.test(lab(o))); if (s) return s; }
     const prefix = one(options.filter((o) => new RegExp('^' + esc + '\\b').test(lab(o))));
     if (prefix !== null) return prefix || null;
@@ -331,6 +339,28 @@
     return false;
   }
 
+  async function listboxOptions(btn) {
+    press(btn);
+    const opts = await waitFor(() => { const o = visibleOptions(btn); return o.length ? o : null; }, 2000);
+    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await sleep(150);
+    return opts ? opts.map((o) => o.text).filter((t) => t && !PLACEHOLDER_TEXT.test(t)) : [];
+  }
+
+  /** "May 2027", "05/2027" or "2027-05-15" as a date or month input's value. */
+  function dateValue(text, type) {
+    const t = norm(text);
+    let y = (t.match(/\b(19|20)\d\d\b/) || [])[0];
+    let m = MONTHS.findIndex((x) => t.includes(x) || t.split(' ').includes(x.slice(0, 3))) + 1;
+    let d = 1;
+    const iso = (text || '').match(/(\d{4})-(\d{1,2})(?:-(\d{1,2}))?/);
+    const us = (text || '').match(/\b(\d{1,2})\/(?:(\d{1,2})\/)?(\d{4})\b/);
+    if (iso) { y = iso[1]; m = +iso[2]; d = +(iso[3] || 1); } else if (us) { y = us[3]; m = +us[1]; d = +(us[2] || 1); }
+    if (!y || !m) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return type === 'month' ? `${y}-${pad(m)}` : `${y}-${pad(m)}-${pad(d)}`;
+  }
+
   async function fillResume(input) {
     const bytes = Uint8Array.from(atob(RESUME.data), (c) => c.charCodeAt(0));
     const file = () => {
@@ -379,11 +409,11 @@
         if (ok) mark(el, ans.source, q, ans.key);
       }
       const st = bridge(el, { op: 'read' });
-      if (!ok && isRequired(el, q) && !(st || { value: [] }).value.length && !el.value) {
+      if (!ok && !(st || { value: [] }).value.length && !el.value) {
         if (st && st.options.length && canAsk(q)) {
           askChoice(el, q, st.options, (i) => bridge(el, { op: 'select', index: i }),
-            () => !(bridge(el, { op: 'read' }) || { value: [] }).value.length);
-        } else mark(el, 'missing', q);
+            () => !(bridge(el, { op: 'read' }) || { value: [] }).value.length, { multi: st.multi, required: isRequired(el, q) });
+        } else if (isRequired(el, q)) mark(el, 'missing', q);
       }
       await sleep(60);
     }
@@ -412,22 +442,30 @@
       const empty = isSelect ? (!el.value || el.selectedIndex <= 0) : !el.value.trim();
       if (!empty) continue;
       const ans = answerFor(el, q);
+      const type = (el.getAttribute('type') || '').toLowerCase();
+      const isDate = ['date', 'month'].includes(type);
       let ok = false;
       if (ans) {
         if (isSelect) {
           const opt = pickOption([...el.options].map((o) => ({ text: o.text, value: o.value, o })), ans.value);
           if (opt) { setValue(el, opt.value); ok = true; }
+        } else if (isDate) {
+          const d = dateValue(ans.value, type);
+          if (d) { setValue(el, d); ok = el.value === d; }
         } else if (!(el.tagName === 'TEXTAREA' && ans.source === 'profile' && ans.key !== 'address')) {
           setValue(el, ans.value);
           ok = true;
         }
       }
       const real = isSelect ? [...el.options].filter((o) => o.value && !PLACEHOLDER_TEXT.test(o.text.trim())) : [];
+      const required = isRequired(el, q);
       if (ok) mark(el, ans.source, q, ans.key);
-      else if (DRAFTS && !isSelect && isOpenEnded(el, q)) askText(el, q);
-      else if (isSelect && real.length && isRequired(el, q) && canAsk(q)) {
-        askChoice(el, q, real.map((o) => clean(o.text)), (i) => setValue(el, real[i].value), () => el.selectedIndex <= 0 || !el.value);
-      } else if (isRequired(el, q)) mark(el, 'missing', q);
+      else if (!isSelect && isOpenEnded(el, q) && canAsk(q)) askText(el, q);
+      else if (isSelect && real.length && canAsk(q)) {
+        askChoice(el, q, real.map((o) => clean(o.text)), (i) => setValue(el, real[i].value), () => el.selectedIndex <= 0 || !el.value, { required });
+      } else if (!isSelect && el.tagName === 'INPUT' && canAsk(q) && !['email', 'tel', 'password'].includes(type)) {
+        askText(el, q, { short: true, type, required }); // "GPA", "Expected graduation date", "Years of experience"
+      } else if (required) mark(el, 'missing', q);
     }
 
     // Radio groups
@@ -446,9 +484,39 @@
       const choice = ans && pickOption(opts, ans.value);
       const box = group[0].closest(CONTAINERS) || group[0];
       if (choice) { choice.el.click(); mark(choice.el.closest('label') || choice.el, ans.source, q, ans.key); }
-      else if ((isRequired(group[0], q) || /[*✱]/.test(q)) && canAsk(q)) {
-        askChoice(box, q, opts.map((o) => clean(o.text)), (i) => opts[i].el.click(), () => !group.some((r) => r.checked));
+      else if (canAsk(q)) {
+        askChoice(box, q, opts.map((o) => clean(o.text)), (i) => opts[i].el.click(), () => !group.some((r) => r.checked),
+          { required: isRequired(group[0], q) || /[*✱]/.test(q) });
       } else if (isRequired(group[0], q) || /[*✱]/.test(q)) mark(box, 'missing', q);
+    }
+
+    // Checkbox lists ("Select all that apply"). A lone checkbox is a consent box and stays yours.
+    const boxes = new Map();
+    for (const c of document.querySelectorAll('input[type=checkbox]')) {
+      const box = c.closest('fieldset, [role=group], .checkbox-group, [class*="checkbox" i][class*="group" i], .field-wrapper');
+      if (box && visible(c.closest('label') || c.parentElement || c)) {
+        if (!boxes.has(box)) boxes.set(box, []);
+        boxes.get(box).push(c);
+      }
+    }
+    for (const [box, list] of boxes) {
+      if (list.length < 2 || !fresh(box) || list.some((c) => c.checked)) continue;
+      const q = questionFor(list[0], true);
+      const opts = list.map((c) => ({ el: c, text: clean([...(c.labels || [])].map(textOf).join(' ') || c.value) }));
+      const required = box.getAttribute('aria-required') === 'true' || /[*✱]\s*$/.test(q);
+      const ans = answerFor(list[0], q);
+      const choice = ans && pickOption(opts, ans.value);
+      if (choice) { choice.el.click(); mark(box, ans.source, q, ans.key); }
+      else if (canAsk(q)) {
+        askChoice(box, q, opts.map((o) => o.text), (i) => { if (!opts[i].el.checked) opts[i].el.click(); },
+          () => !list.some((c) => c.checked), { multi: true, required });
+      } else if (required) mark(box, 'missing', q);
+    }
+    for (const c of document.querySelectorAll('input[type=checkbox]')) {
+      const inList = [...boxes.values()].some((l) => l.length > 1 && l.includes(c));
+      if (inList || c.checked || !fresh(c) || !visible(c.closest('label') || c)) continue;
+      const q = questionFor(c) || questionFor(c, true);
+      if (isRequired(c, q) || /[*✱]\s*$/.test(q)) mark(c.closest('label') || c, 'missing', q); // consent: tick it yourself
     }
 
     // Yes/No button pairs (Ashby and others)
@@ -464,9 +532,10 @@
       const ans = answerFor(btns[0], q);
       const choice = ans && pickOption(btns.map((b) => ({ el: b, text: textOf(b), value: '' })), ans.value);
       if (choice) { choice.el.click(); mark(box, ans.source, q, ans.key); }
-      else if (/[*✱]/.test(q) && canAsk(q)) {
+      else if (canAsk(q)) {
         askChoice(box, q, btns.map(textOf), (i) => btns[i].click(),
-          () => !btns.some((b) => b.getAttribute('aria-pressed') === 'true' || /active|selected/i.test(b.className)));
+          () => !btns.some((b) => b.getAttribute('aria-pressed') === 'true' || /active|selected/i.test(b.className)),
+          { required: /[*✱]/.test(q) });
       } else if (/[*✱]/.test(q)) mark(box, 'missing', q);
     }
 
@@ -475,8 +544,17 @@
       if (!fresh(btn) || btn.disabled || !visible(btn) || !PLACEHOLDER_TEXT.test(textOf(btn))) continue;
       const q = questionFor(btn, true);
       const ans = answerFor(btn, q);
-      if (ans && await fillListboxButton(btn, ans)) mark(btn, ans.source, q, ans.key);
-      else if (/[*✱]/.test(q) || btn.getAttribute('aria-required') === 'true') mark(btn, 'missing', q);
+      const required = /[*✱]/.test(q) || btn.getAttribute('aria-required') === 'true';
+      if (ans && await fillListboxButton(btn, ans)) { mark(btn, ans.source, q, ans.key); continue; }
+      const options = canAsk(q) ? await listboxOptions(btn) : [];
+      if (options.length) {
+        askChoice(btn, q, options, async (i) => {
+          press(btn);
+          const opts = await waitFor(() => { const o = visibleOptions(btn); return o.length ? o : null; }, 2000);
+          const pick = opts && opts.find((o) => o.text === options[i]);
+          if (pick) press(pick.el); else btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        }, () => PLACEHOLDER_TEXT.test(textOf(btn)), { required });
+      } else if (required) mark(btn, 'missing', q);
     }
   }
 
@@ -539,8 +617,22 @@
   function canAsk(question) {
     if (!DRAFTS || !question) return false;
     const key = ruleFor(norm(question));
-    return !(key && NEVER_ASK.has(key)) && !NEVER_ASK_TEXT.test(question);
+    // Sensitive questions: Claude may only translate an answer you set in your profile onto this form's wording
+    if ((key && NEVER_ASK.has(key)) || NEVER_ASK_TEXT.test(question)) return !!(key && NEVER_ASK.has(key) && P[key]) && !/acknowledg|consent|certif|attest|\bagree|signature/i.test(question);
+    return true;
   }
+
+  /** Your own profile answer for a question, passed to Claude so it maps rather than guesses. */
+  const HINT_LABELS = {
+    workAuth: 'authorized to work', sponsorship: 'needs visa sponsorship', over18: '18 or older', relocate: 'willing to relocate',
+    inOffice: 'OK working in office', startDate: 'earliest start date', gradDate: 'graduation date', gradMonth: 'graduation month',
+    gradYear: 'graduation year', degree: 'degree', major: 'major', school: 'school', gender: 'gender', race: 'race',
+    hispanic: 'Hispanic or Latino', veteran: 'veteran status', disability: 'disability status', pronouns: 'pronouns', salary: 'salary expectation'
+  };
+  const hintFor = (question) => {
+    const key = ruleFor(norm(question));
+    return key && P[key] ? `${HINT_LABELS[key] || key}: ${P[key]}` : undefined;
+  };
 
   function pending(el) {
     const t = outlineTarget(el);
@@ -548,23 +640,25 @@
     t.style.outlineOffset = '1px';
   }
 
-  function askText(el, q) {
+  function askText(el, q, { short = false, type = '', required = true } = {}) {
     el.setAttribute('data-applylog-drafting', el.placeholder || '');
-    el.placeholder = 'ApplyLog: drafting an answer with Claude…';
+    el.placeholder = short ? 'ApplyLog: asking Claude…' : 'ApplyLog: drafting an answer with Claude…';
     pending(el);
-    report.asks.push({ el, q: tidy(q), maxLength: el.maxLength > 0 ? el.maxLength : undefined });
+    report.asks.push({ el, q: tidy(q), short, type, required, hint: hintFor(q), maxLength: el.maxLength > 0 ? el.maxLength : undefined });
   }
 
-  function askChoice(el, q, options, apply, stillEmpty) {
+  function askChoice(el, q, options, apply, stillEmpty, { multi = false, required = true } = {}) {
     pending(el);
-    report.asks.push({ el, q: tidy(q), options, apply, stillEmpty });
+    report.asks.push({ el, q: tidy(q), options, apply, stillEmpty, multi, required, hint: hintFor(q) });
   }
 
   /** Sends written and multiple-choice questions to Claude in one batch, then fills what comes back. */
   async function draftAnswers(asks) {
     const questions = asks.map((a, i) => {
       a.id = `q${i + 1}`;
-      return a.options ? { id: a.id, q: a.q, options: a.options } : { id: a.id, q: a.q, maxLength: a.maxLength };
+      return a.options
+        ? { id: a.id, q: a.q, options: a.options, multi: a.multi || undefined, hint: a.hint }
+        : { id: a.id, q: a.q, maxLength: a.maxLength, short: a.short || undefined, type: a.type || undefined, hint: a.hint };
     });
     let res;
     try {
@@ -579,22 +673,26 @@
     const done = (el, color, title) => { outlineTarget(el).style.outline = color ? `2px solid ${color}` : ''; el.title = title || ''; };
     for (const a of asks) {
       const text = byId.get(a.id);
+      const unanswered = () => (a.required ? done(a.el, COLORS.missing, why) : done(a.el, ''));
       if (a.options) {
-        const i = text ? a.options.findIndex((o) => norm(o) === norm(text)) : -1;
-        if (i >= 0 && a.stillEmpty()) {
-          a.apply(i);
-          done(a.el, COLORS.draft, `Picked by Claude from your profile and resume. Check it before submitting.`);
-        } else if (a.stillEmpty()) done(a.el, COLORS.missing, why);
+        const wanted = text ? (a.multi ? text.split(/\s*\|\s*/) : [text]) : [];
+        const picks = [...new Set(wanted.map((w) => a.options.findIndex((o) => norm(o) === norm(w))).filter((i) => i >= 0))];
+        if (picks.length && a.stillEmpty()) {
+          for (const i of a.multi ? picks : picks.slice(0, 1)) { await a.apply(i); await sleep(120); }
+          done(a.el, COLORS.draft, 'Picked by Claude from your profile and resume. Check it before submitting.');
+        } else if (a.stillEmpty()) unanswered();
         else done(a.el, '');
         continue;
       }
       const el = a.el;
       el.placeholder = el.getAttribute('data-applylog-drafting') || '';
       el.removeAttribute('data-applylog-drafting');
-      if (text && !el.value.trim()) { // don't overwrite anything you typed meanwhile
-        setValue(el, el.maxLength > 0 ? text.slice(0, el.maxLength) : text);
-        done(el, COLORS.draft, 'Drafted by Claude from your resume and the job description. Read and edit before submitting.');
-      } else if (!el.value.trim()) done(el, COLORS.missing, why);
+      const value = text && (['date', 'month'].includes(a.type) ? dateValue(text, a.type) : text);
+      if (value && !el.value.trim()) { // don't overwrite anything you typed meanwhile
+        setValue(el, el.maxLength > 0 ? value.slice(0, el.maxLength) : value);
+        done(el, COLORS.draft, a.short ? 'Filled by Claude from your profile and resume. Check it before submitting.'
+          : 'Drafted by Claude from your resume and the job description. Read and edit before submitting.');
+      } else if (!el.value.trim()) unanswered();
       else done(el, ''); // you answered it yourself
     }
   }
@@ -607,6 +705,10 @@
     P.preferredName = P.preferredName || P.firstName;
     P.location = [P.city, P.state].filter(Boolean).join(', ');
     P.country = countryName(P.country, P.phone);
+    const grad = norm(P.gradDate);
+    const gm = MONTHS.findIndex((m) => grad.includes(m) || grad.split(' ').includes(m.slice(0, 3)));
+    P.gradMonth = gm >= 0 ? MONTHS[gm][0].toUpperCase() + MONTHS[gm].slice(1) : '';
+    P.gradYear = (grad.match(/\b(19|20)\d\d\b/) || [''])[0];
     LIB = answers;
     RESUME = resume && resume.data ? resume : null;
     DRAFTS = drafts;

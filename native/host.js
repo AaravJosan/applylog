@@ -9,7 +9,8 @@
  * to a temporary folder holding your resume.
  *
  * Messages in:  { type: 'ping' }
- *               { type: 'draft', questions: [{ id, q, maxLength } | { id, q, options }], job: { title, company, url, description },
+ *               { type: 'draft', questions: [{ id, q, maxLength?, short?, type?, hint? } | { id, q, options, multi?, hint? }],
+ *                 job: { title, company, url, description },
  *                 profile: {...}, resume: { name, type, data } }
  * Messages out: { ok: true, version, claude } | { ok: true, answers: [{ id, text }] } | { ok: false, error }
  */
@@ -80,7 +81,13 @@ Tailor each answer to this company and role using the job description: connect s
 
 Write plain text with no markdown, headings, bullet points or sign-off placeholders. Short answers run 80 to 180 words unless the question implies otherwise; a cover letter runs 200 to 350 words in three or four paragraphs. Never exceed a field's character limit when one is given.
 
-Some questions are multiple choice and list their options. For those, answer with one option's exact text, copied character for character. Pick an option only when the profile or resume supports it: graduation date and degree for "will you graduate by…", the earliest start date for "can you start between…", the city for a preferred office, the resume's focus for a team or specialty. If nothing supports an answer, return an empty string for that id rather than guess.
+Some questions are multiple choice and list their options. Answer with one option's exact text, copied character for character; for "select all that apply" questions (marked multi) give every option that applies, separated by " | ". Work the answer out from the profile and resume: compare the graduation date and degree against "will you graduate by…", the earliest start date against "can you start between…", the city against a preferred office, the resume's experience against a team, specialty or years-of-experience range, and pick the closest fit for preference questions.
+
+Some questions are short-answer fields (marked short): reply with just the value, such as a GPA, a URL, a number of years, a month and year, or a few words. Copy facts from the resume or profile; for a date field give the month and year.
+
+When a question includes "candidate's profile", that is a fact the candidate already told us (for example "authorized to work: Yes" or "graduation date: May 2027"): use it, choose the option or write the value that means the same thing, and never contradict it.
+
+If the profile and resume don't support an answer, return an empty string for that id rather than guess. Never invent contact details, usernames, IDs or numbers.
 
 The candidate reviews and edits every answer before submitting, so make written answers specific and ready to use.`;
 
@@ -91,9 +98,14 @@ const PROFILE_LABELS = {
   relocate: 'Willing to relocate', inOffice: 'OK in office/hybrid'
 };
 
-const describe = (x) => x.options
-  ? `- id ${x.id} (multiple choice: ${x.options.map((o) => JSON.stringify(o)).join(' | ')}): ${x.q}`
-  : `- id ${x.id}: ${x.q}${x.maxLength ? ` (limit ${x.maxLength} characters)` : ''}`;
+const describe = (x) => {
+  const hint = x.hint ? ` [candidate's profile, ${x.hint}]` : '';
+  if (x.options) {
+    return `- id ${x.id} (${x.multi ? 'multi, choose any of' : 'multiple choice'}: ${x.options.slice(0, 300).map((o) => JSON.stringify(o)).join(' | ')}): ${x.q}${hint}`;
+  }
+  const kind = x.short ? `short${x.type && x.type !== 'text' ? `, ${x.type}` : ''}` : 'written';
+  return `- id ${x.id} (${kind}${x.maxLength ? `, limit ${x.maxLength} characters` : ''}): ${x.q}${hint}`;
+};
 
 function buildPrompt({ questions, job, profile }, resumeFile) {
   const prof = Object.entries(PROFILE_LABELS)

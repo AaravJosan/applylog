@@ -40,6 +40,8 @@ cat > "$LAUNCHER" <<EOF
 #!/bin/bash
 export PATH="$(dirname "$CLAUDE"):$(dirname "$NODE"):/usr/bin:/bin"
 export APPLYLOG_CLAUDE="$CLAUDE"
+# The claude CLI finds its login in the keychain by user name
+export USER="\${USER:-\$(/usr/bin/id -un)}" LOGNAME="\${LOGNAME:-\$(/usr/bin/id -un)}" HOME="\${HOME:-$HOME}"
 exec "$NODE" "$DEST/host.js" "\$@"
 EOF
 chmod +x "$LAUNCHER"

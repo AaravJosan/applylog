@@ -26,7 +26,7 @@
       if (p) {
         const opts = (p.options || []).flatMap((o) => o.options || [o]);
         if (req.op === 'read') {
-          res = { options: opts.map(label), value: (p.getValue ? p.getValue() : []).map(label) };
+          res = { options: opts.map(label), value: (p.getValue ? p.getValue() : []).map(label), multi: !!(p.isMulti || (p.selectProps && p.selectProps.isMulti)) };
         } else if (req.op === 'search') {
           p.selectProps.onInputChange(req.text, { action: 'input-change', prevInputValue: '' });
           res = { ok: true };
