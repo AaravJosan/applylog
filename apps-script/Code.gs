@@ -86,8 +86,10 @@ function doPost(e) {
         sheet.getRange(row, HEADERS.length).setValue(now);
         return json_({ ok: true, action: 'updated', row: row });
       }
-      sheet.appendRow([now].concat(values, [now]));
-      return json_({ ok: true, action: 'added', row: sheet.getLastRow() });
+      // Set cells directly: appendRow is rejected on a sheet holding a table
+      const next = sheet.getLastRow() + 1;
+      sheet.getRange(next, 1, 1, HEADERS.length).setValues([[now].concat(values, [now])]);
+      return json_({ ok: true, action: 'added', row: next });
     }
 
     return json_({ ok: false, error: 'Unknown action' });
@@ -102,63 +104,80 @@ function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(HEADERS);
-    formatSheet_(sheet);
-  }
+  if (sheet.getLastRow() === 0) formatSheet_(sheet);
   return sheet;
 }
 
 function formatSheet_(sheet) {
-  const header = sheet.getRange(1, 1, 1, HEADERS.length);
-  header.setValues([HEADERS]).setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff');
-  sheet.setFrozenRows(1);
-
   const maxRows = Math.max(sheet.getMaxRows() - 1, 999);
-  Object.keys(OPTIONS).forEach((col) => {
-    const rule = SpreadsheetApp.newDataValidation()
+  const dropdowns = Object.keys(OPTIONS).map((col) => () =>
+    sheet.getRange(2, Number(col), maxRows, 1).setDataValidation(SpreadsheetApp.newDataValidation()
       .requireValueInList(OPTIONS[col], true)
       .setAllowInvalid(true)
-      .build();
-    sheet.getRange(2, Number(col), maxRows, 1).setDataValidation(rule);
-  });
+      .build()));
+  tryEach_('Applications', [
+    () => sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS])
+      .setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff'),
+    () => sheet.setFrozenRows(1),
+    () => [110, 240, 160, 150, 260, 110, 150, 150, 110, 260, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w)),
+    () => sheet.getRange(2, 1, maxRows, 1).setNumberFormat('yyyy-mm-dd'),
+    () => sheet.getRange(2, HEADERS.length, maxRows, 1).setNumberFormat('yyyy-mm-dd')
+  ].concat(dropdowns));
+}
 
-  sheet.getRange(2, 1, maxRows, 1).setNumberFormat('yyyy-mm-dd');
-  sheet.getRange(2, HEADERS.length, maxRows, 1).setNumberFormat('yyyy-mm-dd');
-  [110, 240, 160, 150, 260, 110, 150, 150, 110, 260, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w));
+/**
+ * Runs formatting steps, skipping any that a Google Sheets table rejects
+ * ("not allowed on cells in typed columns"); the table's column types already
+ * give dropdowns and dates. Sheets applies changes lazily, so flush inside the
+ * try or the error surfaces later, in unrelated code.
+ */
+function tryEach_(label, steps) {
+  steps.forEach((step) => {
+    try {
+      step();
+      SpreadsheetApp.flush();
+    } catch (e) {
+      console.warn(label + ' formatting skipped: ' + e.message);
+    }
+  });
 }
 
 function getOutreach_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(OUTREACH_SHEET);
-  if (!sheet) sheet = ss.insertSheet(OUTREACH_SHEET);
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(O_HEADERS);
-    formatOutreach_(sheet);
+  if (!sheet) {
+    try {
+      sheet = ss.insertSheet(OUTREACH_SHEET, ss.getNumSheets());
+    } catch (e) {
+      throw new Error('Couldn’t create the Outreach tab (' + e.message + '). Add a blank tab named "'
+        + OUTREACH_SHEET + '" yourself (a plain sheet, not a table), then run setup again.');
+    }
   }
+  // formatOutreach_ writes the headers. It sets cells directly instead of using
+  // appendRow, which a sheet holding a table rejects.
+  if (sheet.getLastRow() === 0) formatOutreach_(sheet);
   return sheet;
 }
 
 function formatOutreach_(sheet) {
-  const header = sheet.getRange(1, 1, 1, O_HEADERS.length);
-  header.setValues([O_HEADERS]).setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff');
-  sheet.setFrozenRows(1);
-
+  sheet.getRange(1, 1, 1, O_HEADERS.length).setValues([O_HEADERS]);
   const maxRows = Math.max(sheet.getMaxRows() - 1, 999);
-  const rule = SpreadsheetApp.newDataValidation().requireValueInList(O_STATUSES, true).setAllowInvalid(true).build();
-  sheet.getRange(2, O_COL.status, maxRows, 1).setDataValidation(rule);
-  [1, O_COL.lastContact, O_COL.followUp, O_COL.updated].forEach((c) =>
-    sheet.getRange(2, c, maxRows, 1).setNumberFormat('yyyy-mm-dd'));
-  [110, 170, 150, 200, 240, 240, 130, 110, 110, 260, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w));
-
-  // Highlight rows whose follow-up date has arrived
-  const range = sheet.getRange(2, 1, maxRows, O_HEADERS.length);
-  const due = SpreadsheetApp.newConditionalFormatRule()
-    .whenFormulaSatisfied('=AND($I2<>"", $I2<=TODAY())')
-    .setBackground('#fef7e0')
-    .setRanges([range])
-    .build();
-  sheet.setConditionalFormatRules([due]);
+  tryEach_('Outreach', [
+    () => sheet.getRange(1, 1, 1, O_HEADERS.length)
+      .setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff'),
+    () => sheet.setFrozenRows(1),
+    () => [110, 170, 150, 200, 240, 240, 130, 110, 110, 260, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w)),
+    () => sheet.getRange(2, O_COL.status, maxRows, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(O_STATUSES, true).setAllowInvalid(true).build()),
+    () => [1, O_COL.lastContact, O_COL.followUp, O_COL.updated].forEach((c) =>
+      sheet.getRange(2, c, maxRows, 1).setNumberFormat('yyyy-mm-dd')),
+    // Highlight rows whose follow-up date has arrived
+    () => sheet.setConditionalFormatRules([SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND($I2<>"", $I2<=TODAY())')
+      .setBackground('#fef7e0')
+      .setRanges([sheet.getRange(2, 1, maxRows, O_HEADERS.length)])
+      .build()])
+  ]);
 }
 
 /** People at a company, plus how many follow-ups are due across the whole tab. */
@@ -209,8 +228,10 @@ function outreachSave_(data) {
       .setValues([values.concat([lastContact, followUp, notes, now])]);
     return { ok: true, action: 'updated', row: row };
   }
-  sheet.appendRow([now].concat(values, [lastContact, followUp, notes, now]));
-  return { ok: true, action: 'added', row: sheet.getLastRow() };
+  const next = sheet.getLastRow() + 1;
+  sheet.getRange(next, 1, 1, O_HEADERS.length)
+    .setValues([[now].concat(values, [lastContact, followUp, notes, now])]);
+  return { ok: true, action: 'added', row: next };
 }
 
 function outreachRows_(sheet) {
