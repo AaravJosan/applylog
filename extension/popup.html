@@ -20,6 +20,9 @@
     Already in your sheet. Changes will update that row.
   </div>
 
+  <label id="resumeRow" class="resume-pick" hidden>Resume for this application
+    <select id="resumePick"></select>
+  </label>
   <button type="button" id="autofillBtn" class="secondary">✎ Autofill this application</button>
   <div id="autofillMsg" class="msg" role="status" aria-live="polite"></div>
   <button type="button" id="rememberBtn" class="link-btn remember">Remember my answers on this page</button>
@@ -92,6 +95,7 @@
     <div id="oMsg" class="msg" role="status" aria-live="polite"></div>
   </section>
 
+  <script src="resumes.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

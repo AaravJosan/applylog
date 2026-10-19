@@ -281,9 +281,21 @@ function showAutofillMsg(text, type = '') {
   $('autofillMsg').className = `msg ${type}`;
 }
 
+// Pick which resume autofill uploads and Claude reads (when you've saved more than one)
+async function initResumePicker() {
+  const { resumes, resumeId } = await getResumes();
+  const pick = $('resumePick');
+  for (const r of resumes) pick.add(new Option(r.label, r.id));
+  pick.value = resumeId;
+  $('resumeRow').hidden = resumes.length < 2;
+}
+
+$('resumePick').addEventListener('change', (e) => chrome.storage.local.set({ resumeId: e.target.value }));
+
 $('autofillBtn').addEventListener('click', async () => {
-  const { profile = {}, answers = [], resume = null, draftsEnabled = true } =
-    await chrome.storage.local.get(['profile', 'answers', 'resume', 'draftsEnabled']);
+  const { profile = {}, answers = [], draftsEnabled = true } =
+    await chrome.storage.local.get(['profile', 'answers', 'draftsEnabled']);
+  const resume = await getActiveResume();
   if (!Object.values(profile).some(Boolean)) {
     showAutofillMsg('Add your details under ⚙ Settings → Autofill profile first.', 'err');
     return;
@@ -510,4 +522,5 @@ const openOptions = () => chrome.runtime.openOptionsPage();
 $('openOptions').addEventListener('click', openOptions);
 $('setupBtn').addEventListener('click', openOptions);
 
+initResumePicker();
 init();

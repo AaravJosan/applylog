@@ -12,6 +12,7 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 - **No duplicates**: revisit a job you've already saved and the extension loads its row, so you can update status or referral instead of adding a new one.
 - **Ready-made sheet**: headers, frozen top row and dropdown menus are set up automatically.
 - **Autofill applications**: fill a whole application in one click: contact details, links, resume upload, education, work authorization, common screening questions and voluntary self-identification. Tested on Greenhouse, Lever and Ashby. Also built for Workday, LinkedIn Easy Apply, Handshake and plain HTML forms.
+- **A resume per kind of role**: save several resumes (Software, Hardware…) and pick which one an application gets. Autofill uploads it and Claude drafts from it.
 - **Claude answers the rest**: every question your profile doesn't settle goes to Claude in one batch, with your resume, profile and the job description, using your own Claude subscription. That covers written answers ("Why do you want to work here?", required cover letters), dropdowns, radio buttons, Yes/No buttons, select-all-that-apply checkboxes and multi-selects ("Will you graduate by June 2027?", "Preferred office?", "Which languages?"), and short fields like GPA, graduation date or a portfolio link. Its answers are highlighted purple for you to review. Work authorization, sponsorship, demographic and salary questions are answered only from what you set in your profile (Claude may match your answer to the form's wording, but never guesses one), and consent checkboxes are always left for you.
 - **Learns your answers**: answer a company's custom question once, click **Remember my answers on this page**, and it's reused when a similar question comes up.
 
@@ -86,8 +87,9 @@ This setup is for your own use on your own Mac. Anthropic doesn't allow apps you
 
 ### Autofilling an application
 
-1. In ⚙ settings, fill in **Autofill profile**: your details, resume, common questions and (optionally) self-identification answers. Click **Save profile**. Everything stays in this browser and is never sent to your sheet.
-2. On an application form, open ApplyLog and click **Autofill this application**.
+1. In ⚙ settings, fill in **Autofill profile**: your details, resumes, common questions and (optionally) self-identification answers. Click **Save profile**. Everything stays in this browser and is never sent to your sheet.
+   - Under **Resumes**, type a name (like *Software* or *Hardware*), then choose the file. Add as many as you like.
+2. On an application form, open ApplyLog. If you've saved more than one resume, pick one under **Resume for this application** (it stays selected until you change it). Then click **Autofill this application**.
 3. Check the highlighted fields:
    - **Green**: filled from your profile.
    - **Blue**: filled from a saved answer to a similar question. Double-check these.
@@ -121,6 +123,7 @@ extension/
   popup.html/css/js  The popup form and job-detail scraping
   autofill.js        Fills application forms (runs in the extension's isolated world)
   bridge.js          Small page-side helper for React dropdowns
+  resumes.js         Saved resumes and which one is selected
   options.html/js    Settings page
   background.js      Passes draft requests to the native helper
   icons/
