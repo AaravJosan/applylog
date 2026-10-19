@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const DETAIL_FIELDS = ['title', 'company', 'location', 'url'];
-const TRACK_FIELDS = ['status', 'connected', 'contact', 'referral', 'notes'];
+const TRACK_FIELDS = ['status', 'connected', 'contact', 'referral', 'notes', 'nextAction', 'dueDate'];
 
 /**
  * Runs inside the job posting page. Must be fully self-contained.
@@ -230,7 +230,43 @@ async function init() {
   }
 
   if (settings.webAppUrl && $('url').value) lookupExisting($('url').value);
+  if (settings.webAppUrl) loadDashboard();
+  else $('dashboardMsg').textContent = 'Connect your Google Sheet to see overdue and stale items.';
   initOutreach(tab, settings);
+}
+
+async function loadDashboard() {
+  const box = $('dashboardMsg');
+  const list = $('attentionList');
+  try {
+    const data = await callSheet({ action: 'dashboard' });
+    list.replaceChildren();
+    const entries = [
+      ...data.overdue.map((x) => ({ ...x, kind: 'Action overdue', due: true })),
+      ...data.stale.map((x) => ({ ...x, kind: 'No update in 7+ days', due: false }))
+    ].slice(0, 8);
+    box.textContent = entries.length || data.overdueOutreach ? '' : 'Nothing overdue or stale.';
+    for (const item of entries) {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.textContent = `${item.title || 'Untitled job'} · ${item.company || 'Unknown company'}`;
+      a.href = item.url || '#';
+      a.target = '_blank';
+      const meta = document.createElement('span');
+      meta.className = `meta${item.due ? ' is-due' : ''}`;
+      meta.textContent = [item.kind, item.nextAction, item.dueDate && `Due ${item.dueDate}`].filter(Boolean).join(' · ');
+      li.append(a, meta);
+      list.append(li);
+    }
+    if (data.overdueOutreach) {
+      const li = document.createElement('li');
+      li.className = 'meta is-due';
+      li.textContent = `${data.overdueOutreach} overdue outreach follow-up${data.overdueOutreach === 1 ? '' : 's'}${data.outreachNames.length ? `: ${data.outreachNames.join(', ')}` : ''}`;
+      list.append(li);
+    }
+  } catch (e) {
+    box.textContent = 'Could not load attention list.';
+  }
 }
 
 $('findPeople').addEventListener('click', () => {

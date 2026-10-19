@@ -69,12 +69,20 @@
         <label>Contact name<input id="contact" placeholder="Who you know there"></label>
       </div>
       <button type="button" id="findPeople" class="ghost">Find my LinkedIn connections at this company ↗</button>
+      <label>Next action<input id="nextAction" placeholder="Follow up with recruiter, prep for interview…"></label>
+      <label>Action due<input id="dueDate" type="date"></label>
       <label>Notes<textarea id="notes" rows="2" placeholder="Salary, recruiter, next steps…"></textarea></label>
     </section>
 
     <button type="submit" id="saveBtn" class="primary">Add to sheet</button>
     <div id="msg" class="msg" role="status" aria-live="polite"></div>
   </form>
+
+  <section id="dashboard">
+    <h2>Needs attention</h2>
+    <div id="dashboardMsg" class="hint">Loading…</div>
+    <ul id="attentionList" class="attention-list"></ul>
+  </section>
 
   <section id="outreach">
     <h2>Outreach</h2>

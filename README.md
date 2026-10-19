@@ -18,7 +18,7 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 
 ## Sheet columns
 
-| Date added | Job title | Company | Location | URL | Status | Connected on LinkedIn | Contact | Referral | Notes | Last updated |
+| Date added | Job title | Company | Location | URL | Status | Connected on LinkedIn | Contact | Referral | Notes | Last updated | Next action | Action due |
 |---|---|---|---|---|---|---|---|---|---|---|
 
 - **Status**: Saved, Applied, Interviewing, Offer, Rejected, Withdrawn
@@ -83,7 +83,10 @@ This setup is for your own use on your own Mac. Anthropic doesn't allow apps you
 1. Open any job posting.
 2. Click the ApplyLog icon. Details are pre-filled; fix anything that looks off.
 3. Set your status, LinkedIn connection and referral, and add notes.
-4. Click **Add to sheet**.
+4. Add a next action and due date when you have a follow-up or other task.
+5. Click **Add to sheet**.
+
+The **Needs attention** panel shows application actions due today or earlier, applications with no update in the last seven days, and overdue outreach follow-ups. Rejected and withdrawn applications are excluded.
 
 ### Autofilling an application
 
@@ -139,7 +142,7 @@ apps-script/
 - Job sites change their page layouts often. If a field stops auto-filling on a site, the selectors live in `extractJob()` in `popup.js`.
 - Application autofill matches each question to a profile field using the `RULES` list in `autofill.js`, then falls back to your saved answers. Add a pattern there if a common question isn't recognised.
 - Which questions count as open-ended is set by `OPEN_ENDED` and `isOpenEnded()` in `autofill.js`. The drafting instructions are `SYSTEM` in `native/host.js`. Set `APPLYLOG_MODEL` in the launcher it writes to pick a model (for example `sonnet`). By default it uses your Claude Code default.
-- Updating from an older ApplyLog: paste the new `Code.gs`, run `setup` once to create the Outreach tab, then publish a new version.
+- Updating from an older ApplyLog: paste the new `Code.gs`, run `setup` once to add the new application columns and create/update the Outreach tab, then publish a new version.
 - After editing `Code.gs`, publish a new version: **Deploy → Manage deployments → Edit → Version: New version**.
 
 ## Tech

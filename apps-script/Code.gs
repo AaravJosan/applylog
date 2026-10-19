@@ -17,10 +17,14 @@ const SHEET_NAME = 'Applications';
 
 const HEADERS = [
   'Date added', 'Job title', 'Company', 'Location', 'URL',
-  'Status', 'Connected on LinkedIn', 'Contact', 'Referral', 'Notes', 'Last updated'
+  'Status', 'Connected on LinkedIn', 'Contact', 'Referral', 'Notes', 'Last updated', 'Next action', 'Action due'
 ];
 const FIELDS = ['title', 'company', 'location', 'url', 'status', 'connected', 'contact', 'referral', 'notes'];
 const URL_COL = 5;
+// Keep existing columns in place so current sheet data migrates without shifting.
+const UPDATED_COL = 11;
+const ACTION_COL = 12;
+const DUE_COL = 13;
 
 const OPTIONS = {
   6: ['Saved', 'Applied', 'Interviewing', 'Offer', 'Rejected', 'Withdrawn'], // Status
@@ -67,6 +71,7 @@ function doPost(e) {
     if (data.action === 'ping') return json_({ ok: true, sheet: sheet.getName() });
     if (data.action === 'outreachList') return json_(outreachList_(data));
     if (data.action === 'outreachSave') return json_(outreachSave_(data));
+    if (data.action === 'dashboard') return json_(dashboard_());
 
     const row = findRowByUrl_(sheet, data.url);
 
@@ -75,20 +80,26 @@ function doPost(e) {
       const values = sheet.getRange(row, 2, 1, FIELDS.length).getValues()[0];
       const job = {};
       FIELDS.forEach((f, i) => { job[f] = String(values[i]); });
+      job.nextAction = String(sheet.getRange(row, ACTION_COL).getValue() || '');
+      const due = sheet.getRange(row, DUE_COL).getValue();
+      job.dueDate = due instanceof Date ? Utilities.formatDate(due, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(due || '');
       return json_({ ok: true, found: true, row: row, job: job });
     }
 
     if (data.action === 'save') {
       const values = FIELDS.map((f) => clean_(data[f]));
       const now = new Date();
+      const nextAction = clean_(data.nextAction);
+      const dueDate = parseDate_(data.dueDate);
       if (row > 0) {
         sheet.getRange(row, 2, 1, values.length).setValues([values]);
-        sheet.getRange(row, HEADERS.length).setValue(now);
+        sheet.getRange(row, UPDATED_COL).setValue(now);
+        sheet.getRange(row, ACTION_COL, 1, 2).setValues([[nextAction, dueDate || '']]);
         return json_({ ok: true, action: 'updated', row: row });
       }
       // Set cells directly: appendRow is rejected on a sheet holding a table
       const next = sheet.getLastRow() + 1;
-      sheet.getRange(next, 1, 1, HEADERS.length).setValues([[now].concat(values, [now])]);
+      sheet.getRange(next, 1, 1, HEADERS.length).setValues([[now].concat(values, [now, nextAction, dueDate || ''])]);
       return json_({ ok: true, action: 'added', row: next });
     }
 
@@ -119,10 +130,50 @@ function formatSheet_(sheet) {
     () => sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS])
       .setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff'),
     () => sheet.setFrozenRows(1),
-    () => [110, 240, 160, 150, 260, 110, 150, 150, 110, 260, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w)),
+    () => [110, 240, 160, 150, 260, 110, 150, 150, 110, 260, 110, 240, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w)),
     () => sheet.getRange(2, 1, maxRows, 1).setNumberFormat('yyyy-mm-dd'),
-    () => sheet.getRange(2, HEADERS.length, maxRows, 1).setNumberFormat('yyyy-mm-dd')
+    () => sheet.getRange(2, UPDATED_COL, maxRows, 1).setNumberFormat('yyyy-mm-dd'),
+    () => sheet.getRange(2, DUE_COL, maxRows, 1).setNumberFormat('yyyy-mm-dd')
   ].concat(dropdowns));
+}
+
+/** Popup summary: overdue next actions, stale applications, and outreach follow-ups due. */
+function dashboard_() {
+  const sheet = getSheet_();
+  const today = startOfDay_(new Date());
+  const cutoff = addDays_(today, -7);
+  const overdue = [];
+  const stale = [];
+  const last = sheet.getLastRow();
+  if (last >= 2) {
+    sheet.getRange(2, 1, last - 1, HEADERS.length).getValues().forEach((r) => {
+      if (!r[4]) return;
+      const status = String(r[5] || 'Saved');
+      if (['Rejected', 'Withdrawn'].includes(status)) return;
+      const item = {
+        title: String(r[1] || ''), company: String(r[2] || ''), url: String(r[4] || ''),
+        status, nextAction: String(r[ACTION_COL - 1] || ''),
+        dueDate: fmtDate_(r[DUE_COL - 1]), updated: fmtDate_(r[UPDATED_COL - 1])
+      };
+      if (r[DUE_COL - 1] instanceof Date && r[DUE_COL - 1] <= today) overdue.push(item);
+      if (r[UPDATED_COL - 1] instanceof Date && r[UPDATED_COL - 1] < cutoff) stale.push(item);
+    });
+  }
+  overdue.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  stale.sort((a, b) => a.updated.localeCompare(b.updated));
+  const outreach = outreachList_({ company: '' });
+  return {
+    ok: true, overdue: overdue.slice(0, 5), stale: stale.slice(0, 5),
+    overdueOutreach: outreach.due, outreachNames: outreach.dueNames
+  };
+}
+
+function parseDate_(value) {
+  if (!value) return null;
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.getFullYear() === Number(m[1]) && d.getMonth() === Number(m[2]) - 1 && d.getDate() === Number(m[3]) ? d : null;
 }
 
 /**

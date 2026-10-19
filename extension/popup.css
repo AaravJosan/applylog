@@ -58,6 +58,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 #autofillMsg { margin: 4px 0 6px; min-height: 0; }
 .remember { display: block; margin: 0 auto 10px; font-size: 12px; color: var(--ink-2); }
 .due { background: #fef7e0; color: #7a5a00; border-radius: 6px; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
+.hint { color: var(--ink-2); font-size: 11px; }
+.attention-list { list-style: none; margin: 0; padding: 0; }
+.attention-list li { border-top: 1px solid var(--line); padding: 6px 0; }
+.attention-list li:first-child { border-top: 0; }
+.attention-list a { color: var(--ink); text-decoration: none; font-weight: 600; }
+.attention-list a:hover { text-decoration: underline; }
+.attention-list .meta { display: block; color: var(--ink-2); font-size: 11px; }
+.attention-list .is-due { color: #b06000; font-weight: 600; }
 @media (prefers-color-scheme: dark) { .due { background: #3a3220; color: #fdd663; } }
 .people { list-style: none; margin: 0 0 8px; padding: 0; }
 .people li { display: grid; grid-template-columns: 1fr 128px; gap: 6px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
