@@ -230,6 +230,7 @@ async function init() {
   }
 
   if (settings.webAppUrl && $('url').value) lookupExisting($('url').value);
+  initOutreach(tab, settings);
 }
 
 $('findPeople').addEventListener('click', () => {
@@ -249,6 +250,8 @@ $('jobForm').addEventListener('submit', async (e) => {
   for (const f of [...DETAIL_FIELDS, ...TRACK_FIELDS]) payload[f] = $(f).value.trim();
   try {
     const data = await callSheet(payload);
+    rememberJob(payload.company, payload.url);
+    if (!$('oCompany').value.trim()) { $('oCompany').value = payload.company; loadOutreach(); }
     showMsg(data.action === 'updated' ? `✓ Updated row ${data.row}` : `✓ Added to row ${data.row}`, 'ok');
     $('existingBanner').hidden = false;
     btn.textContent = 'Update row in sheet';
@@ -341,6 +344,166 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type !== 'draftDone') return;
   if (msg.ok) showAutofillMsg(`✓ Claude answered ${msg.count} question${msg.count === 1 ? '' : 's'} (purple). Check them before submitting; any left amber need you.`, 'ok');
   else showAutofillMsg(`Couldn’t draft answers: ${msg.error}`, 'err');
+});
+
+// ---------- Outreach ----------
+
+const O_STATUSES = ['To contact', 'Request sent', 'Connected', 'Messaged', 'Replied',
+  'Referral asked', 'Referral received', 'No response'];
+let outreachJobUrl = '';
+
+/** Runs inside a LinkedIn profile page you have open: reads the name and headline. */
+function extractProfile() {
+  const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const h1 = document.querySelector('main h1') || document.querySelector('h1');
+  const name = clean(h1 && h1.textContent) || clean(document.title.split('|')[0]).replace(/^\(\d+\)\s*/, '');
+  // The headline is the first line of text after the name in the top card
+  let role = '';
+  const card = h1 && h1.closest('section');
+  if (card) {
+    const lines = [...card.querySelectorAll('div, span')]
+      .filter((e) => !e.children.length).map((e) => clean(e.textContent)).filter(Boolean);
+    const i = lines.indexOf(name);
+    role = lines.slice(i + 1).find((t) => t.length > 3 && !/^(·|he\/him|she\/her|they\/them|\d+(st|nd|rd|th))/i.test(t)) || '';
+  }
+  const slug = (window.location.pathname.match(/^\/in\/([^/]+)/) || [])[1];
+  return { name, role: role.slice(0, 200), profileUrl: slug ? `https://www.linkedin.com/in/${slug}/` : '' };
+}
+
+function showOMsg(text, type = '') {
+  $('oMsg').textContent = text;
+  $('oMsg').className = `msg ${type}`;
+}
+
+/** The last job you saved, so outreach on a profile page knows which company it's for. */
+function rememberJob(company, url) {
+  if (company) chrome.storage.local.set({ lastCompany: company, lastJobUrl: url || '' });
+}
+
+async function initOutreach(tab, settings) {
+  for (const st of O_STATUSES) $('oStatus').add(new Option(st));
+  const { lastCompany = '', lastJobUrl = '' } = await chrome.storage.local.get(['lastCompany', 'lastJobUrl']);
+  const onProfile = tab && /^https:\/\/www\.linkedin\.com\/in\//.test(tab.url || '');
+
+  if (onProfile) {
+    // A profile page isn't a job, so outreach goes to the last company you saved
+    $('oCompany').value = lastCompany;
+    outreachJobUrl = lastJobUrl;
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: extractProfile });
+      $('oName').value = result.name || '';
+      $('oRole').value = result.role || '';
+      $('oProfileUrl').value = result.profileUrl || '';
+      $('oStatus').value = 'Request sent';
+      $('addPerson').open = true;
+    } catch (e) { /* fill it in by hand */ }
+    $('outreach').scrollIntoView();
+  } else {
+    $('oCompany').value = $('company').value.trim() || lastCompany;
+    outreachJobUrl = $('company').value.trim() ? $('url').value : lastJobUrl;
+  }
+  if (settings.webAppUrl) loadOutreach();
+}
+
+async function loadOutreach() {
+  const company = $('oCompany').value.trim();
+  try {
+    const data = await callSheet({ action: 'outreachList', company });
+    renderDue(data);
+    renderPeople(data.people, company);
+  } catch (e) {
+    showOMsg(e.message, 'err');
+  }
+}
+
+function renderDue(data) {
+  const line = $('dueLine');
+  line.replaceChildren();
+  line.hidden = !data.due;
+  if (!data.due) return;
+  line.append(`${data.due} follow-up${data.due === 1 ? '' : 's'} due: ${data.dueNames.join(', ')}${data.due > data.dueNames.length ? '…' : ''} `);
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'link-btn';
+  open.textContent = 'Open sheet →';
+  open.addEventListener('click', () => chrome.tabs.create({ url: data.sheetUrl }));
+  line.append(open);
+}
+
+function renderPeople(people, company) {
+  const list = $('people');
+  list.replaceChildren();
+  if (!company) return;
+  if (!people.length) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = `No one at ${company} yet.`;
+    list.append(li);
+    return;
+  }
+  for (const p of people) {
+    const li = document.createElement('li');
+    const who = document.createElement('div');
+    who.className = 'who';
+    const name = document.createElement(/^https:\/\/(www\.)?linkedin\.com\//.test(p.profileUrl) ? 'a' : 'strong');
+    name.textContent = p.name;
+    if (name.tagName === 'A') { name.href = p.profileUrl; name.target = '_blank'; }
+    const meta = document.createElement('span');
+    meta.className = `meta${p.due ? ' is-due' : ''}`;
+    meta.textContent = [p.due ? 'Follow up now' : p.followUp && `Follow up ${p.followUp}`, p.role]
+      .filter(Boolean).join(' · ');
+    who.append(name, meta);
+
+    const sel = document.createElement('select');
+    for (const st of O_STATUSES) sel.add(new Option(st));
+    if (p.status && !O_STATUSES.includes(p.status)) sel.add(new Option(p.status));
+    sel.value = p.status || 'To contact';
+    sel.setAttribute('aria-label', `Status for ${p.name}`);
+    sel.addEventListener('change', async () => {
+      sel.disabled = true;
+      try {
+        await callSheet({ action: 'outreachSave', ...p, status: sel.value });
+        showOMsg(`✓ ${p.name}: ${sel.value}`, 'ok');
+        await loadOutreach();
+      } catch (e) {
+        showOMsg(e.message, 'err');
+        sel.disabled = false;
+      }
+    });
+    li.append(who, sel);
+    list.append(li);
+  }
+}
+
+$('oCompany').addEventListener('change', () => {
+  rememberJob($('oCompany').value.trim(), outreachJobUrl);
+  loadOutreach();
+});
+
+$('oAdd').addEventListener('click', async () => {
+  const person = {
+    name: $('oName').value.trim(),
+    company: $('oCompany').value.trim(),
+    role: $('oRole').value.trim(),
+    profileUrl: $('oProfileUrl').value.trim(),
+    jobUrl: outreachJobUrl,
+    status: $('oStatus').value,
+    notes: $('oNotes').value.trim()
+  };
+  if (!person.name || !person.company) { showOMsg('Add a name and company first.', 'err'); return; }
+  const btn = $('oAdd');
+  btn.disabled = true;
+  try {
+    const data = await callSheet({ action: 'outreachSave', ...person });
+    showOMsg(data.action === 'updated' ? `✓ Updated ${person.name}` : `✓ Added ${person.name}`, 'ok');
+    for (const id of ['oName', 'oProfileUrl', 'oRole', 'oNotes']) $(id).value = '';
+    $('oStatus').value = 'To contact';
+    await loadOutreach();
+  } catch (e) {
+    showOMsg(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 const openOptions = () => chrome.runtime.openOptionsPage();
