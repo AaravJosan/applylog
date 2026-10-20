@@ -343,6 +343,7 @@ $('autofillBtn').addEventListener('click', async () => {
   btn.disabled = true;
   showAutofillMsg('Filling…');
   try {
+    await chrome.storage.local.set({ lastAutofillResume: { url: $('url').value.trim(), resume } });
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const target = await injectAutofill(tab.id);
     // Embedded forms (a Greenhouse iframe on a company careers site) can't see the
@@ -389,6 +390,57 @@ $('rememberBtn').addEventListener('click', async () => {
   } catch (err) {
     showAutofillMsg('Can’t read this page.', 'err');
   }
+});
+
+// Save a point-in-time copy of the application answers and selected resume.
+$('recordBtn').addEventListener('click', async () => {
+  const btn = $('recordBtn');
+  btn.disabled = true;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const frames = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: () => {
+        const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
+        const labelFor = (el) => {
+          const labels = el.labels ? [...el.labels].map((x) => clean(x.textContent)) : [];
+          return clean(el.getAttribute('aria-label') || labels[0] || el.name || el.id || 'Unlabeled field');
+        };
+        const values = new Map();
+        for (const el of document.querySelectorAll('input,select,textarea')) {
+          if (el.type === 'hidden' || el.type === 'file' || el.type === 'submit' || el.type === 'button' || el.disabled) continue;
+          if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) continue;
+          let value = '';
+          if (el.type === 'radio') {
+            if (!el.checked) continue;
+            value = el.labels && el.labels[0] ? clean(el.labels[0].textContent) : el.value;
+          } else if (el.type === 'checkbox') value = el.checked ? 'Yes' : 'No';
+          else if (el.tagName === 'SELECT') value = [...el.selectedOptions].map((o) => clean(o.textContent)).join(', ');
+          else value = clean(el.value);
+          if (!value) continue;
+          const question = labelFor(el);
+          if (!values.has(question)) values.set(question, value);
+        }
+        return [...values].map(([question, answer]) => ({ question, answer }));
+      }
+    });
+    const answers = frames.flatMap((f) => f.result || []);
+    const { lastAutofillResume } = await chrome.storage.local.get('lastAutofillResume');
+    const resume = lastAutofillResume && lastAutofillResume.url === $('url').value.trim()
+      ? lastAutofillResume.resume : await getActiveResume();
+    const job = {
+      url: $('url').value.trim(), title: $('title').value.trim(), company: $('company').value.trim(),
+      savedAt: new Date().toISOString(), answers,
+      resume: resume ? { id: resume.id, label: resume.label, name: resume.name, type: resume.type, size: resume.size, data: resume.data } : null
+    };
+    const { applicationRecords = [] } = await chrome.storage.local.get('applicationRecords');
+    const records = applicationRecords.filter((x) => x.url !== job.url);
+    records.unshift(job);
+    await chrome.storage.local.set({ applicationRecords: records.slice(0, 20) });
+    showAutofillMsg(`✓ Saved ${answers.length} answers${resume ? ` and ${resume.label} resume` : ''} on this device.`, 'ok');
+  } catch (err) {
+    showAutofillMsg('Could not save this application record.', 'err');
+  } finally { btn.disabled = false; }
 });
 
 chrome.runtime.onMessage.addListener((msg) => {

@@ -1,9 +1,22 @@
 // Relays draft requests from autofill.js to the native helper (native/host.js),
 // which runs the claude CLI. Lives here rather than in the popup so drafting
 // keeps going after the popup closes; an open native port keeps this worker alive.
-importScripts('resumes.js');
-
 const HOST = 'com.applylog.claude';
+
+// Keep the worker self-contained: a failure to fetch an imported extension
+// script prevents the service worker from starting at all.
+async function getActiveResume() {
+  const store = await chrome.storage.local.get(['resumes', 'resumeId', 'resume']);
+  let { resumes = [], resumeId = '' } = store;
+  if (store.resume && !resumes.length) {
+    resumes = [{ id: Date.now().toString(36), label: 'My resume', ...store.resume }];
+    resumeId = resumes[0].id;
+    await chrome.storage.local.set({ resumes, resumeId });
+    await chrome.storage.local.remove('resume');
+  }
+  if (resumes.length && !resumes.some((r) => r.id === resumeId)) resumeId = resumes[0].id;
+  return resumes.find((r) => r.id === resumeId) || null;
+}
 
 function ask(message) {
   return new Promise((resolve) => {
