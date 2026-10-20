@@ -143,8 +143,13 @@ function onEdit(e) {
   for (let r = Math.max(range.getRow(), 2); r <= range.getLastRow(); r++) syncCompany_(sheet, r, cols);
 }
 
-/** Copy the given shared columns from `row` to every other row with the same company. */
+/**
+ * Copy the given shared columns from `row` to every other row with the same
+ * company. A value that isn't one of the column's dropdown options (say a
+ * Status pasted one column over) stays on its own row instead of spreading.
+ */
 function syncCompany_(sheet, row, cols) {
+  cols = cols.filter((c) => !OPTIONS[c] || OPTIONS[c].includes(String(sheet.getRange(row, c).getValue())));
   if (!cols.length) return;
   const last = sheet.getLastRow();
   if (last < 2) return;
