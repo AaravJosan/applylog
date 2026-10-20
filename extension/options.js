@@ -65,19 +65,50 @@ profileForm.addEventListener('submit', async (e) => {
 
 loadProfile();
 
-// Resume: stored as base64 so autofill can attach it to upload fields
-async function showResume() {
-  const { resume } = await chrome.storage.local.get('resume');
-  const info = $('resumeInfo');
-  info.textContent = '';
-  if (!resume) { info.textContent = 'No resume saved yet.'; return; }
-  info.append(`Saved: ${resume.name} (${Math.round(resume.size / 1024)} KB) `);
-  const remove = document.createElement('button');
-  remove.type = 'button';
-  remove.className = 'link-btn';
-  remove.textContent = 'Remove';
-  remove.addEventListener('click', async () => { await chrome.storage.local.remove('resume'); showResume(); });
-  info.append(remove);
+// Resumes: stored as base64 so autofill can attach them to upload fields (see resumes.js)
+async function showResumes() {
+  const { resumes, resumeId } = await getResumes();
+  const list = $('resumeList');
+  list.textContent = '';
+  if (!resumes.length) {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="empty">No resumes saved yet.</span>';
+    list.append(li);
+    return;
+  }
+  const save = (next, id = resumeId) => chrome.storage.local.set({ resumes: next, resumeId: id }).then(showResumes);
+  resumes.forEach((r, i) => {
+    const li = document.createElement('li');
+    const text = document.createElement('div');
+    const label = document.createElement('input');
+    label.value = r.label;
+    label.setAttribute('aria-label', `Name for ${r.name}`);
+    label.addEventListener('change', () => {
+      resumes[i] = { ...r, label: label.value.trim() || r.name };
+      save(resumes);
+    });
+    const file = document.createElement('div');
+    file.className = 'q';
+    file.textContent = `${r.name} (${Math.round(r.size / 1024)} KB)`;
+    if (r.id === resumeId) {
+      const tag = document.createElement('span');
+      tag.className = 'default';
+      tag.textContent = 'Selected';
+      file.append(tag);
+    }
+    text.append(label, file);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.title = 'Remove';
+    del.setAttribute('aria-label', `Remove ${r.label}`);
+    del.textContent = '×';
+    del.addEventListener('click', () => {
+      const rest = resumes.filter((x) => x.id !== r.id);
+      save(rest, r.id === resumeId ? (rest[0] || {}).id || '' : resumeId);
+    });
+    li.append(text, del);
+    list.append(li);
+  });
 }
 
 $('resumeFile').addEventListener('change', async (e) => {
@@ -87,9 +118,14 @@ $('resumeFile').addEventListener('change', async (e) => {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let bin = '';
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  await chrome.storage.local.set({ resume: { name: file.name, type: file.type, size: file.size, data: btoa(bin) } });
+  const { resumes, resumeId } = await getResumes();
+  const label = $('resumeLabel').value.trim() || file.name.replace(/\.[^.]+$/, '');
+  const resume = { id: newResumeId(), label, name: file.name, type: file.type, size: file.size, data: btoa(bin) };
+  await chrome.storage.local.set({ resumes: [...resumes, resume], resumeId: resumeId || resume.id });
   e.target.value = '';
-  showResume();
+  $('resumeLabel').value = '';
+  $('resumeInfo').textContent = `✓ Added "${label}"`;
+  showResumes();
 });
 
 // Saved answers for questions the profile doesn't cover
@@ -143,9 +179,10 @@ $('answerForm').addEventListener('submit', async (e) => {
 // Lists change when the popup remembers answers
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && changes.answers) showAnswers();
+  if (area === 'local' && changes.resumeId) showResumes();
 });
 
-showResume();
+showResumes();
 showAnswers();
 
 // Drafting written answers through the native helper

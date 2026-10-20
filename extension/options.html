@@ -24,6 +24,8 @@
     .add-answer { grid-template-columns: 1fr 1fr auto; align-items: end; }
     .check { display: flex; gap: 8px; align-items: center; font-weight: 600; }
     .check input { width: auto; margin: 0; }
+    .add-resume { grid-template-columns: 1fr 2fr; }
+    .answers .default { color: var(--good); font-size: 11px; font-weight: 600; margin-left: 6px; }
     .add-answer .secondary { margin-bottom: 7px; padding: 7px 12px; font-size: 13px; }
   </style>
 </head>
@@ -123,10 +125,14 @@
     </section>
 
     <section>
-      <h2>Resume</h2>
-      <label>Uploaded to applications automatically (PDF or Word, under 5 MB)
-        <input id="resumeFile" type="file" accept=".pdf,.doc,.docx,.txt,.rtf">
-      </label>
+      <h2>Resumes</h2>
+      <p class="hint">Uploaded to applications automatically, and what Claude reads when drafting answers.
+        Add one per kind of role (Software, Hardware…) and pick which to use in the popup.</p>
+      <ul id="resumeList" class="answers"></ul>
+      <div class="row add-answer add-resume">
+        <label>Name<input id="resumeLabel" placeholder="Software"></label>
+        <label>File (PDF or Word, under 5 MB)<input id="resumeFile" type="file" accept=".pdf,.doc,.docx,.txt,.rtf"></label>
+      </div>
       <div id="resumeInfo" class="hint"></div>
     </section>
 
@@ -206,6 +212,7 @@
     </form>
   </section>
 
+  <script src="resumes.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

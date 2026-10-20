@@ -1,6 +1,8 @@
 // Relays draft requests from autofill.js to the native helper (native/host.js),
 // which runs the claude CLI. Lives here rather than in the popup so drafting
 // keeps going after the popup closes; an open native port keeps this worker alive.
+importScripts('resumes.js');
+
 const HOST = 'com.applylog.claude';
 
 function ask(message) {
@@ -30,7 +32,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   }
   if (msg.type === 'draft') {
     (async () => {
-      const { profile = {}, resume = null } = await chrome.storage.local.get(['profile', 'resume']);
+      const { profile = {} } = await chrome.storage.local.get('profile');
+      const resume = await getActiveResume();
       const res = await ask({ type: 'draft', questions: msg.questions, job: msg.job, profile, resume });
       reply(res);
       // Let an open popup update its status line
