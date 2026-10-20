@@ -25,6 +25,8 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 - **Connected on LinkedIn**: No, Request sent, Yes
 - **Referral**: Not asked, Asked, Received, Declined
 
+**Connected on LinkedIn**, **Contact** and **Referral** are shared across a company: change one on any row (in the sheet or the extension) and every other row at that company updates too. A new job at a company you've already tracked starts with those values filled in. Company names are matched loosely, so "Amazon" and "Amazon (Annapurna Labs)" count as the same company.
+
 An **Outreach** tab tracks the people you contact:
 
 | Date added | Name | Company | Role | LinkedIn URL | Job URL | Status | Last contact | Follow up on | Notes | Last updated |

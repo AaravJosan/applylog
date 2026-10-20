@@ -205,11 +205,14 @@ function setValues(obj, fields) {
 
 async function lookupExisting(url) {
   try {
-    const data = await callSheet({ action: 'lookup', url });
+    const data = await callSheet({ action: 'lookup', url, company: $('company').value });
     if (data.found) {
       setValues(data.job, TRACK_FIELDS);
       $('existingBanner').hidden = false;
       $('saveBtn').textContent = 'Update row in sheet';
+    } else if (data.shared) {
+      // New job at a company you've tracked before: carry over who you know there
+      setValues(data.shared, ['connected', 'contact', 'referral']);
     }
   } catch (e) { /* lookup is a nice-to-have; ignore failures */ }
 }

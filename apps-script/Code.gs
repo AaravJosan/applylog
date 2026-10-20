@@ -31,6 +31,10 @@ const OPTIONS = {
   7: ['No', 'Request sent', 'Yes'],                                          // Connected
   9: ['Not asked', 'Asked', 'Received', 'Declined']                          // Referral
 };
+// Connected, Contact and Referral describe the company, not one job, so a
+// change on any row copies to every other row at the same company.
+const SHARED = { connected: 7, contact: 8, referral: 9 };
+const SHARED_DEFAULTS = { connected: 'No', contact: '', referral: 'Not asked' };
 
 // Outreach tab: one row per person you're reaching out to
 const OUTREACH_SHEET = 'Outreach';
@@ -76,7 +80,7 @@ function doPost(e) {
     const row = findRowByUrl_(sheet, data.url);
 
     if (data.action === 'lookup') {
-      if (row < 0) return json_({ ok: true, found: false });
+      if (row < 0) return json_({ ok: true, found: false, shared: companyShared_(sheet, data.company, -1) });
       const values = sheet.getRange(row, 2, 1, FIELDS.length).getValues()[0];
       const job = {};
       FIELDS.forEach((f, i) => { job[f] = String(values[i]); });
@@ -91,15 +95,29 @@ function doPost(e) {
       const now = new Date();
       const nextAction = clean_(data.nextAction);
       const dueDate = parseDate_(data.dueDate);
+      const company = data.company;
       if (row > 0) {
+        const prev = sheet.getRange(row, 1, 1, HEADERS.length).getValues()[0];
         sheet.getRange(row, 2, 1, values.length).setValues([values]);
         sheet.getRange(row, UPDATED_COL).setValue(now);
         sheet.getRange(row, ACTION_COL, 1, 2).setValues([[nextAction, dueDate || '']]);
+        const changed = Object.values(SHARED).filter((c) => String(prev[c - 1]) !== values[c - 2]);
+        syncCompany_(sheet, row, changed);
         return json_({ ok: true, action: 'updated', row: row });
       }
+      // A new job starts with what you already have at that company, unless
+      // the popup set something new, which then applies company-wide.
+      const known = companyShared_(sheet, company, -1);
+      const changed = [];
+      Object.keys(SHARED).forEach((f) => {
+        const i = SHARED[f] - 2;
+        if (values[i] === SHARED_DEFAULTS[f] && known[f]) values[i] = clean_(known[f]);
+        else if (values[i] !== (known[f] || SHARED_DEFAULTS[f])) changed.push(SHARED[f]);
+      });
       // Set cells directly: appendRow is rejected on a sheet holding a table
       const next = sheet.getLastRow() + 1;
       sheet.getRange(next, 1, 1, HEADERS.length).setValues([[now].concat(values, [now, nextAction, dueDate || ''])]);
+      syncCompany_(sheet, next, changed);
       return json_({ ok: true, action: 'added', row: next });
     }
 
@@ -109,6 +127,60 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Simple trigger: when you edit Connected, Contact or Referral by hand, copy
+ * the change to the other rows at the same company. Script writes don't fire
+ * onEdit, so the copies don't trigger it again.
+ */
+function onEdit(e) {
+  const range = e && e.range;
+  if (!range || range.getSheet().getName() !== SHEET_NAME) return;
+  const cols = Object.values(SHARED).filter((c) => c >= range.getColumn() && c <= range.getLastColumn());
+  if (!cols.length) return;
+  const sheet = range.getSheet();
+  for (let r = Math.max(range.getRow(), 2); r <= range.getLastRow(); r++) syncCompany_(sheet, r, cols);
+}
+
+/** Copy the given shared columns from `row` to every other row with the same company. */
+function syncCompany_(sheet, row, cols) {
+  if (!cols.length) return;
+  const last = sheet.getLastRow();
+  if (last < 2) return;
+  const data = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
+  const src = data[row - 2];
+  const key = companyKey_(src[2]);
+  if (!key) return;
+  data.forEach((r, i) => {
+    if (i === row - 2 || companyKey_(r[2]) !== key) return;
+    cols.forEach((c) => {
+      if (r[c - 1] !== src[c - 1]) sheet.getRange(i + 2, c).setValue(src[c - 1]);
+    });
+  });
+}
+
+/** Shared values already recorded for a company, from its first matching row. */
+function companyShared_(sheet, company, skipRow) {
+  const key = companyKey_(company);
+  const last = sheet.getLastRow();
+  if (!key || last < 2) return {};
+  const data = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
+  const i = data.findIndex((r, j) => j + 2 !== skipRow && companyKey_(r[2]) === key);
+  if (i < 0) return {};
+  const out = {};
+  Object.keys(SHARED).forEach((f) => { out[f] = String(data[i][SHARED[f] - 1] || ''); });
+  return out;
+}
+
+/** "Amazon (Annapurna Labs)", "amazon", "Amazon.com, Inc." → "amazon" */
+function companyKey_(name) {
+  return String(name || '').toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\.com\b/g, ' ')
+    .replace(/[,.]/g, ' ')
+    .replace(/\b(inc|llc|ltd|corp|corporation|co|company|technologies|labs)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
 }
 
 function getSheet_() {
