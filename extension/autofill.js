@@ -421,14 +421,16 @@
       await sleep(60);
     }
 
-    // Cover letters offered as "attach or enter manually": open the text box so it gets drafted
+    // Uploads offered as "attach or enter manually" (cover letters and the like): open the text box so Claude drafts it.
+    // Not the resume: that's your file, attached above.
     if (DRAFTS) {
       for (const b of document.querySelectorAll('button')) {
         if (!/^enter manually$/i.test(textOf(b)) || !fresh(b)) continue;
         const group = b.closest('[role=group], .field-wrapper, fieldset');
         const file = group && group.querySelector('input[type=file]');
-        if (!group || !/cover letter/i.test(textOf(group)) || (file && file.files.length) || group.querySelector('textarea')) continue;
-        if (group.getAttribute('aria-required') !== 'true' && !/cover letter\s*[*✱]/i.test(textOf(group))) continue; // optional: skip it
+        if (!group || (file && file.files.length) || group.querySelector('textarea')) continue;
+        const label = group.getAttribute('aria-labelledby') && document.getElementById(group.getAttribute('aria-labelledby'));
+        if (/resume|\bcv\b/i.test(label ? textOf(label) : textOf(group))) continue;
         press(b);
         await waitFor(() => group.querySelector('textarea'), 1500);
       }
@@ -566,7 +568,6 @@
   function isOpenEnded(el, question) {
     if (!question || el.hasAttribute('data-applylog-drafting') || ruleFor(norm(question))) return false;
     if (el.tagName === 'INPUT' && !['text', ''].includes((el.getAttribute('type') || '').toLowerCase())) return false;
-    if (/cover letter/i.test(question) && !isRequired(el, question)) return false; // only when they ask for one
     return el.tagName === 'TEXTAREA' || OPEN_ENDED.test(question);
   }
 
