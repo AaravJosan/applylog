@@ -38,7 +38,7 @@
     ['currentCompany', /current (company|employer)|most recent (company|employer)|\bemployer\b|\borganization\b/],
     ['currentTitle', /current (job )?(title|role|position)|most recent (title|role)|\bjob title\b/],
     ['school', /school|universit|college|institution/],
-    ['degree', /\bdegree\b/],
+    ['degree', /\bdegree\b|level of education|education level|highest (level of )?education/],
     ['major', /\bmajor\b|discipline|field of study|area of study/],
     ['gradMonth', /graduation month|month (of|you) (will )?graduat/],
     ['gradYear', /graduation year|year (of|you) (will )?graduat|\bclass of\b/],
@@ -79,6 +79,18 @@
     white: /^white\b/,
     asian: /^asian\b/
   };
+
+  // Degrees by level, however they're written: "B.S.", "BS", "Bachelor's", "Bachelors", "Bachlor of Science"
+  const DEGREE_LEVELS = [
+    ['bachelor', /\bbach[a-z]*l[a-z]*r|baccalaureate|\bb ?(s|a|sc|eng|tech|s ?e|b ?a)\b/],
+    ['master', /\bmast[a-z]*r|\bm ?(s|a|sc|eng|phil|ed|b ?a)\b/],
+    ['doctorate', /\bph ?d\b|doctor/],
+    ['associate', /\bassociate/]
+  ];
+  const degreeLevel = (t) => { for (const [level, re] of DEGREE_LEVELS) if (re.test(t)) return level; return null; };
+  // Science, arts or engineering, so "B.S." picks "Bachelor of Science" over "Bachelor of Arts"
+  const degreeField = (t) => (/\bmba\b|business admin/.test(t) ? 'business' : /\b[bm] ?sc?\b|of science/.test(t) ? 'science'
+    : /\b[bm] ?a\b|of arts/.test(t) ? 'arts' : /\b[bm] ?(eng|s ?e)\b|of engineering/.test(t) ? 'engineering' : '');
 
   // Forms list countries by full name ("United States +1" in Greenhouse's phone country picker)
   const COUNTRY_ALIASES = {
@@ -163,6 +175,24 @@
       const lab = node.querySelector(TITLES);
       if (lab && textOf(lab)) return textOf(lab).slice(0, 250);
     }
+    // Some custom application forms render the prompt as a plain paragraph
+    // immediately before the textarea, without label/ARIA markup or a known
+    // field wrapper class. Walk up to the nearest single-field container and
+    // use its preceding prompt text so open-ended questions still reach Claude.
+    node = el;
+    for (let i = 0; node && i < 7; i++, node = node.parentElement) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      const fields = [...parent.querySelectorAll('input:not([type=hidden]), select, textarea')]
+        .filter((f) => visible(f));
+      if (fields.length > 1) break;
+      let sibling = node.previousElementSibling;
+      while (sibling) {
+        const text = textOf(sibling);
+        if (text && !sibling.querySelector('input, select, textarea, button')) return text.slice(0, 250);
+        sibling = sibling.previousElementSibling;
+      }
+    }
     return '';
   }
 
@@ -214,11 +244,17 @@
     };
     const exact = options.find((o) => lab(o) === v || norm(o.value) === v);
     if (exact) return exact;
-    // "BS", "B.S. Computer Science", "Bachelor of Science" all mean the "Bachelor's" option
-    const level = /^(b ?s|b ?a|b ?sc|b ?eng|b ?tech|bachelor)\b/.test(v) ? /bachelor/
-      : /^(m ?s|m ?a|m ?sc|m ?eng|mba|master)\b/.test(v) ? /master/
-        : /^(ph ?d|doctor)/.test(v) ? /ph ?d|doctor/ : null;
-    if (level) { const d = options.filter((o) => level.test(lab(o))); if (d.length === 1) return d[0]; }
+    // "BS", "B.S. Computer Science", "Bachelors" and "Bachelor of Science" are the same degree, either way round
+    const level = degreeLevel(v);
+    if (level) {
+      // Same level, and not a different field: a B.A. never becomes "B.S.", nor an MBA "M.S."
+      const field = degreeField(v);
+      const fits = options.filter((o) => degreeLevel(lab(o)) === level && (!field || !degreeField(lab(o)) || degreeField(lab(o)) === field));
+      if (fits.length === 1) return fits[0];
+      // Several: "Bachelor of Science" for a B.S., a plain "Bachelor's Degree" for a plain "Bachelor's" (never "MBA" for "Master's")
+      const best = fits.filter((o) => degreeField(lab(o)) === field && (field || /\bbach|\bmast|associate|doctor/.test(lab(o))));
+      if (best.length === 1) return best[0];
+    }
     if (syn) { const s = options.find((o) => syn.test(lab(o))); if (s) return s; }
     const prefix = one(options.filter((o) => new RegExp('^' + esc + '\\b').test(lab(o))));
     if (prefix !== null) return prefix || null;
@@ -247,11 +283,43 @@
   function setValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
       : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
-    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+    const next = String(value);
+    // Focus and blur are real DOM transitions. Some form libraries only run
+    // validation after blur, and synthetic blur events alone don't update
+    // document.activeElement or trigger the browser's normal focus sequence.
+    el.focus();
+    // Phone inputs often have a mask that formats the displayed number but
+    // only commits its internal value as characters arrive. A single bulk
+    // input event can leave those widgets looking filled while still invalid.
+    if (el instanceof HTMLInputElement && el.type === 'tel') {
+      let digits = next.replace(/\D/g, '');
+      if (/^\s*\+/.test(next)) {
+        const dial = Object.entries(DIAL_CODES).find(([, country]) => country === P.country);
+        if (dial && digits.startsWith(dial[0]) && digits.length > dial[0].length + 6) digits = digits.slice(dial[0].length);
+      }
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(el, '');
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
+      for (const digit of digits) {
+        setter.call(el, el.value + digit);
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: digit }));
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.blur();
+      return;
+    }
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, next);
+    // React and other controlled-field handlers listen for `input`. Supplying
+    // InputEvent metadata is closer to normal typing than a generic Event and
+    // is required by a few form implementations.
+    try {
+      if (el instanceof HTMLSelectElement) throw new Error('select');
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: next }));
+    } catch (_) {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
-    el.dispatchEvent(new Event('blur'));
+    el.blur();
   }
 
   function press(el) {
@@ -339,6 +407,41 @@
     const choice = opts && pickOption(opts, ans.value);
     if (choice) { press(choice.el); await sleep(150); return true; }
     btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return false;
+  }
+
+  // Greenhouse renders phone country codes as a separate required picker next
+  // to the tel input. Filling only the number leaves the form invalid even
+  // though the number is visible, so select the matching country first.
+  async function fillPhoneCountry(input) {
+    if (!P.country) return false;
+    let group = input.parentElement;
+    for (let depth = 0; group && depth < 5; depth++, group = group.parentElement) {
+      const candidates = [...group.querySelectorAll('select, button, [role="combobox"], [aria-haspopup="listbox"]')]
+        .filter((el) => el !== input && visible(el));
+      const scored = candidates.map((el) => {
+        const hint = norm([el.getAttribute('aria-label'), el.getAttribute('title'), el.name,
+          el.getAttribute('data-testid'), el.textContent].join(' '));
+        const score = (/country|calling code|dial code/.test(hint) ? 4 : 0)
+          + (/^\+?\d{1,4}$/.test(clean(el.textContent)) ? 2 : 0)
+          + (el.matches('[aria-haspopup="listbox"], [role="combobox"]') ? 1 : 0);
+        return { el, score };
+      }).filter((x) => x.score >= 2).sort((a, b) => b.score - a.score);
+      if (!scored.length) continue;
+      const picker = scored[0].el;
+      if (picker instanceof HTMLSelectElement) {
+        const choice = pickOption([...picker.options].map((o) => ({ text: o.text, value: o.value, o })), P.country);
+        if (!choice) return false;
+        setValue(picker, choice.value);
+        return true;
+      }
+      press(picker);
+      const options = await waitFor(() => { const found = visibleOptions(picker); return found.length ? found : null; }, 1800);
+      const choice = options && pickOption(options, P.country);
+      if (choice) { press(choice.el); await sleep(120); return true; }
+      picker.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return false;
+    }
     return false;
   }
 
@@ -443,6 +546,7 @@
       if (!fresh(el) || el.disabled || el.readOnly || !visible(el)) continue;
       if (el.getAttribute('aria-hidden') === 'true') continue; // dropdowns' hidden "required" inputs
       const q = questionFor(el);
+      if (el instanceof HTMLInputElement && el.type === 'tel') await fillPhoneCountry(el);
       const isSelect = el.tagName === 'SELECT';
       const empty = isSelect ? (!el.value || el.selectedIndex <= 0) : !el.value.trim();
       if (!empty) continue;
