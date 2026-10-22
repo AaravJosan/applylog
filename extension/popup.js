@@ -438,6 +438,9 @@ $('recordBtn').addEventListener('click', async () => {
     records.unshift(job);
     await chrome.storage.local.set({ applicationRecords: records.slice(0, 20) });
     showAutofillMsg(`✓ Saved ${answers.length} answers${resume ? ` and ${resume.label} resume` : ''} on this device.`, 'ok');
+    // You've submitted it, so mark the sheet row Applied (unless it's already further along)
+    if (['', 'Saved'].includes($('status').value)) $('status').value = 'Applied';
+    $('jobForm').requestSubmit();
   } catch (err) {
     showAutofillMsg('Could not save this application record.', 'err');
   } finally { btn.disabled = false; }
@@ -445,7 +448,7 @@ $('recordBtn').addEventListener('click', async () => {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type !== 'draftDone') return;
-  if (msg.ok) showAutofillMsg(`✓ Claude answered ${msg.count} question${msg.count === 1 ? '' : 's'} (purple). Check them before submitting; any left amber need you.`, 'ok');
+  if (msg.ok) showAutofillMsg(`✓ Claude answered ${msg.count} question${msg.count === 1 ? '' : 's'} (purple). Check them before submitting; any left red need you.`, 'ok');
   else showAutofillMsg(`Couldn’t draft answers: ${msg.error}`, 'err');
 });
 

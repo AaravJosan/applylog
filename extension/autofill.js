@@ -5,7 +5,7 @@
  *
  * Fills only empty fields and never submits. Colours:
  *   green = from your profile, blue = from your saved answers (double-check),
- *   purple = drafted or picked by Claude (check it), amber = required and still empty.
+ *   purple = drafted or picked by Claude (check it), red = couldn't be filled (yours to answer).
  *
  * Open-ended questions ("Why do you want to work here?") and required multiple-choice
  * questions your profile can't answer are sent with the job description to the
@@ -102,7 +102,7 @@
   const TITLES = 'legend, label, [class*="label" i], [class*="title" i], [class*="question" i], [data-automation-id="formLabel"]';
   const PLACEHOLDER_TEXT = /^(select|select one|select\.\.\.|choose|choose one|please select|--|)$/i;
 
-  const COLORS = { profile: '#34a853', saved: '#4285f4', draft: '#a142f4', missing: '#f9ab00' };
+  const COLORS = { profile: '#34a853', saved: '#4285f4', draft: '#a142f4', missing: '#d93025' };
 
   // Never guessed by Claude: legal status, demographics and money stay yours to answer
   const NEVER_ASK = new Set(['workAuth', 'sponsorship', 'over18', 'gender', 'hispanic', 'race', 'veteran', 'disability', 'pronouns', 'salary']);
@@ -274,9 +274,12 @@
     const target = el.closest('[class*="select__control"]') || el;
     target.style.outline = `2px solid ${COLORS[kind]}`;
     target.style.outlineOffset = '1px';
-    if (kind === 'missing') report.missing.push(clean(question).replace(/[*✱]\s*$/, '').slice(0, 120));
+    if (kind === 'missing') { if (key !== 'optional') report.missing.push(clean(question).replace(/[*✱]\s*$/, '').slice(0, 120)); }
     else report[kind === 'profile' ? 'filled' : 'saved'].push(key);
   }
+
+  // Red outline on anything left empty; only required ones are listed in the popup
+  const unfilled = (el, question, required) => mark(el, 'missing', question, required ? '' : 'optional');
 
   const isRequired = (el, question) => el.required || el.getAttribute('aria-required') === 'true' || /[*✱]\s*$/.test(question);
 
@@ -413,7 +416,7 @@
         if (st && st.options.length && canAsk(q)) {
           askChoice(el, q, st.options, (i) => bridge(el, { op: 'select', index: i }),
             () => !(bridge(el, { op: 'read' }) || { value: [] }).value.length, { multi: st.multi, required: isRequired(el, q) });
-        } else if (isRequired(el, q)) mark(el, 'missing', q);
+        } else unfilled(el, q, isRequired(el, q));
       }
       await sleep(60);
     }
@@ -465,7 +468,7 @@
         askChoice(el, q, real.map((o) => clean(o.text)), (i) => setValue(el, real[i].value), () => el.selectedIndex <= 0 || !el.value, { required });
       } else if (!isSelect && el.tagName === 'INPUT' && canAsk(q) && !['email', 'tel', 'password'].includes(type)) {
         askText(el, q, { short: true, type, required }); // "GPA", "Expected graduation date", "Years of experience"
-      } else if (required) mark(el, 'missing', q);
+      } else unfilled(el, q, required);
     }
 
     // Radio groups
@@ -487,7 +490,7 @@
       else if (canAsk(q)) {
         askChoice(box, q, opts.map((o) => clean(o.text)), (i) => opts[i].el.click(), () => !group.some((r) => r.checked),
           { required: isRequired(group[0], q) || /[*✱]/.test(q) });
-      } else if (isRequired(group[0], q) || /[*✱]/.test(q)) mark(box, 'missing', q);
+      } else unfilled(box, q, isRequired(group[0], q) || /[*✱]/.test(q));
     }
 
     // Checkbox lists ("Select all that apply"). A lone checkbox is a consent box and stays yours.
@@ -510,7 +513,7 @@
       else if (canAsk(q)) {
         askChoice(box, q, opts.map((o) => o.text), (i) => { if (!opts[i].el.checked) opts[i].el.click(); },
           () => !list.some((c) => c.checked), { multi: true, required });
-      } else if (required) mark(box, 'missing', q);
+      } else unfilled(box, q, required);
     }
     for (const c of document.querySelectorAll('input[type=checkbox]')) {
       const inList = [...boxes.values()].some((l) => l.length > 1 && l.includes(c));
@@ -536,7 +539,7 @@
         askChoice(box, q, btns.map(textOf), (i) => btns[i].click(),
           () => !btns.some((b) => b.getAttribute('aria-pressed') === 'true' || /active|selected/i.test(b.className)),
           { required: /[*✱]/.test(q) });
-      } else if (/[*✱]/.test(q)) mark(box, 'missing', q);
+      } else unfilled(box, q, /[*✱]/.test(q));
     }
 
     // Dropdown buttons that open a listbox (Workday)
@@ -554,7 +557,7 @@
           const pick = opts && opts.find((o) => o.text === options[i]);
           if (pick) press(pick.el); else btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         }, () => PLACEHOLDER_TEXT.test(textOf(btn)), { required });
-      } else if (required) mark(btn, 'missing', q);
+      } else unfilled(btn, q, required);
     }
   }
 
@@ -673,7 +676,7 @@
     const done = (el, color, title) => { outlineTarget(el).style.outline = color ? `2px solid ${color}` : ''; el.title = title || ''; };
     for (const a of asks) {
       const text = byId.get(a.id);
-      const unanswered = () => (a.required ? done(a.el, COLORS.missing, why) : done(a.el, ''));
+      const unanswered = () => done(a.el, COLORS.missing, why);
       if (a.options) {
         const wanted = text ? (a.multi ? text.split(/\s*\|\s*/) : [text]) : [];
         const picks = [...new Set(wanted.map((w) => a.options.findIndex((o) => norm(o) === norm(w))).filter((i) => i >= 0))];
