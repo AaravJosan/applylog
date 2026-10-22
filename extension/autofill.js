@@ -134,6 +134,9 @@
   let observer = null;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Forms like Ashby's save each change over a copy of the previous answers, so changes made
+  // in the same instant overwrite each other. Give each one time to land before the next.
+  const settle = () => sleep(120);
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const norm = (s) => clean((s || '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-\[\].:*✱?()]+/g, ' ')).toLowerCase();
   const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
@@ -568,7 +571,7 @@
       }
       const real = isSelect ? [...el.options].filter((o) => o.value && !PLACEHOLDER_TEXT.test(o.text.trim())) : [];
       const required = isRequired(el, q);
-      if (ok) mark(el, ans.source, q, ans.key);
+      if (ok) { mark(el, ans.source, q, ans.key); await settle(); }
       else if (!isSelect && isOpenEnded(el, q) && canAsk(q)) askText(el, q);
       else if (isSelect && real.length && canAsk(q)) {
         askChoice(el, q, real.map((o) => clean(o.text)), (i) => setValue(el, real[i].value), () => el.selectedIndex <= 0 || !el.value, { required });
@@ -592,7 +595,7 @@
       const opts = group.map((r) => ({ el: r, text: [...(r.labels || [])].map(textOf).join(' ') || r.value, value: r.value }));
       const choice = ans && pickOption(opts, ans.value);
       const box = group[0].closest(CONTAINERS) || group[0];
-      if (choice) { choice.el.click(); mark(choice.el.closest('label') || choice.el, ans.source, q, ans.key); }
+      if (choice) { choice.el.click(); mark(choice.el.closest('label') || choice.el, ans.source, q, ans.key); await settle(); }
       else if (canAsk(q)) {
         askChoice(box, q, opts.map((o) => clean(o.text)), (i) => opts[i].el.click(), () => !group.some((r) => r.checked),
           { required: isRequired(group[0], q) || /[*✱]/.test(q) });
@@ -615,7 +618,7 @@
       const required = box.getAttribute('aria-required') === 'true' || /[*✱]\s*$/.test(q);
       const ans = answerFor(list[0], q);
       const choice = ans && pickOption(opts, ans.value);
-      if (choice) { choice.el.click(); mark(box, ans.source, q, ans.key); }
+      if (choice) { choice.el.click(); mark(box, ans.source, q, ans.key); await settle(); }
       else if (canAsk(q)) {
         askChoice(box, q, opts.map((o) => o.text), (i) => { if (!opts[i].el.checked) opts[i].el.click(); },
           () => !list.some((c) => c.checked), { multi: true, required });
@@ -640,9 +643,9 @@
       const q = questionFor(btns[0], true);
       const ans = answerFor(btns[0], q);
       const choice = ans && pickOption(btns.map((b) => ({ el: b, text: textOf(b), value: '' })), ans.value);
-      if (choice) { choice.el.click(); mark(box, ans.source, q, ans.key); }
+      if (choice) { press(choice.el); mark(box, ans.source, q, ans.key); await settle(); }
       else if (canAsk(q)) {
-        askChoice(box, q, btns.map(textOf), (i) => btns[i].click(),
+        askChoice(box, q, btns.map(textOf), (i) => press(btns[i]),
           () => !btns.some((b) => b.getAttribute('aria-pressed') === 'true' || /active|selected/i.test(b.className)),
           { required: /[*✱]/.test(q) });
       } else unfilled(box, q, /[*✱]/.test(q));
@@ -786,7 +789,7 @@
         const wanted = text ? (a.multi ? text.split(/\s*\|\s*/) : [text]) : [];
         const picks = [...new Set(wanted.map((w) => a.options.findIndex((o) => norm(o) === norm(w))).filter((i) => i >= 0))];
         if (picks.length && a.stillEmpty()) {
-          for (const i of a.multi ? picks : picks.slice(0, 1)) { await a.apply(i); await sleep(120); }
+          for (const i of a.multi ? picks : picks.slice(0, 1)) { await a.apply(i); await settle(); }
           done(a.el, COLORS.draft, 'Picked by Claude from your profile and resume. Check it before submitting.');
         } else if (a.stillEmpty()) unanswered();
         else done(a.el, '');
@@ -798,6 +801,7 @@
       const value = text && (['date', 'month'].includes(a.type) ? dateValue(text, a.type) : text);
       if (value && !el.value.trim()) { // don't overwrite anything you typed meanwhile
         setValue(el, el.maxLength > 0 ? value.slice(0, el.maxLength) : value);
+        await settle();
         done(el, COLORS.draft, a.short ? 'Filled by Claude from your profile and resume. Check it before submitting.'
           : 'Drafted by Claude from your resume and the job description. Read and edit before submitting.');
       } else if (!el.value.trim()) unanswered();
