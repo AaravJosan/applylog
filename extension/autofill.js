@@ -1,7 +1,7 @@
 /**
  * ApplyLog application autofill. Injected by the popup into every frame it can
  * reach, in the extension's isolated world, so page scripts never see your
- * profile. Defines window.__applylog = { fill, capture }.
+ * profile. Defines window.__applylog = { fill, capture, answers, job }.
  *
  * Fills only empty fields and never submits. Colours:
  *   green = from your profile, blue = from your saved answers (double-check),
@@ -831,6 +831,7 @@
     const result = { ...report, drafting: report.asks.map((a) => a.q.slice(0, 120)) };
     delete result.asks;
     if (report.asks.length) draftAnswers(report.asks);
+    trackSteps();
 
     // Multi-step forms (Workday, LinkedIn Easy Apply) swap in new fields without
     // reloading. Keep filling fields we haven't seen for the next 30 minutes.
@@ -853,6 +854,56 @@
     setTimeout(() => observer && observer.disconnect(), 30 * 60 * 1000);
 
     return result;
+  }
+
+  /** Every visible answer on this page, labelled by its question; blank fields have answer ''. */
+  function answersOnPage() {
+    const labelFor = (el) => {
+      const labels = el.labels ? [...el.labels].map(textOf) : [];
+      return clean(el.getAttribute('aria-label') || labels[0] || el.name || el.id || 'Unlabeled field');
+    };
+    const values = new Map();
+    for (const el of document.querySelectorAll('input,select,textarea')) {
+      if (el.type === 'hidden' || el.type === 'file' || el.type === 'submit' || el.type === 'button' || el.disabled) continue;
+      if (!visible(el)) continue;
+      let value = '';
+      if (el.type === 'radio') {
+        if (!el.checked) continue;
+        value = el.labels && el.labels[0] ? textOf(el.labels[0]) : el.value;
+      } else if (el.type === 'checkbox') value = el.checked ? 'Yes' : 'No';
+      else if (el.tagName === 'SELECT') value = [...el.selectedOptions].map(textOf).join(', ');
+      else value = clean(el.value);
+      const question = labelFor(el);
+      if (!values.get(question)) values.set(question, value);
+    }
+    return [...values].map(([question, answer]) => ({ question, answer }));
+  }
+
+  // Multi-step forms unmount each step once you move on, so "Save what I submitted"
+  // on the last step would only see that step. Hand each step's answers to the
+  // background worker as you go; it keeps them per tab until you save.
+  let stepPending = new Map();
+  let stepTimer = null;
+  function sendStep() {
+    clearTimeout(stepTimer);
+    if (!stepPending.size) return;
+    const answers = [...stepPending].map(([question, answer]) => ({ question, answer }));
+    stepPending = new Map();
+    chrome.runtime.sendMessage({ type: 'stepAnswers', answers }).catch(() => {});
+  }
+  function noteStep() {
+    // Read now, before a "Next" click swaps the step out; send a moment later
+    for (const { question, answer } of answersOnPage()) stepPending.set(question, answer);
+    clearTimeout(stepTimer);
+    stepTimer = setTimeout(sendStep, 300);
+  }
+  let trackingSteps = false;
+  function trackSteps() {
+    if (trackingSteps) return;
+    trackingSteps = true;
+    for (const type of ['input', 'change', 'click']) document.addEventListener(type, noteStep, true);
+    window.addEventListener('pagehide', () => { noteStep(); sendStep(); });
+    noteStep();
   }
 
   /** Collects answers you typed on this page, for questions the profile doesn't cover. */
@@ -887,5 +938,5 @@
     return [...out.values()];
   }
 
-  window.__applylog = { fill, capture, job: jobContext };
+  window.__applylog = { fill, capture, answers: answersOnPage, job: jobContext };
 })();

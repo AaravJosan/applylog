@@ -38,7 +38,36 @@ function ask(message) {
   });
 }
 
+// Answers from each step of a multi-page application, per tab, so the popup can
+// save the whole thing from the last step. The popup reads and clears them.
+const STEPS_MAX_AGE = 3 * 60 * 60 * 1000;
+let stepWrites = Promise.resolve();
+
+function rememberStep(sender, answers) {
+  if (!sender.tab) return;
+  let origin = sender.origin;
+  try { origin = new URL(sender.tab.url).origin; } catch (e) { /* no tab URL; use the frame's */ }
+  const key = `steps_${sender.tab.id}`;
+  // One write at a time, or two frames' steps would overwrite each other
+  stepWrites = stepWrites.then(async () => {
+    const { [key]: prev } = await chrome.storage.session.get(key);
+    // Another site, or an application from hours ago, starts over
+    const same = prev && prev.origin === origin && Date.now() - prev.updated < STEPS_MAX_AGE;
+    const merged = new Map(same ? prev.answers : []);
+    for (const { question, answer } of answers) {
+      if (answer) merged.set(question, answer); else merged.delete(question);
+    }
+    await chrome.storage.session.set({ [key]: { origin, updated: Date.now(), answers: [...merged] } });
+  }).catch(() => {});
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => { chrome.storage.session.remove(`steps_${tabId}`); });
+
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
+  if (msg.type === 'stepAnswers') {
+    rememberStep(sender, msg.answers || []);
+    return false;
+  }
   if (msg.type === 'ping') {
     ask({ type: 'ping' }).then(reply);
     return true;

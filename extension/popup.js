@@ -398,33 +398,18 @@ $('recordBtn').addEventListener('click', async () => {
   btn.disabled = true;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const frames = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true },
-      func: () => {
-        const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
-        const labelFor = (el) => {
-          const labels = el.labels ? [...el.labels].map((x) => clean(x.textContent)) : [];
-          return clean(el.getAttribute('aria-label') || labels[0] || el.name || el.id || 'Unlabeled field');
-        };
-        const values = new Map();
-        for (const el of document.querySelectorAll('input,select,textarea')) {
-          if (el.type === 'hidden' || el.type === 'file' || el.type === 'submit' || el.type === 'button' || el.disabled) continue;
-          if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) continue;
-          let value = '';
-          if (el.type === 'radio') {
-            if (!el.checked) continue;
-            value = el.labels && el.labels[0] ? clean(el.labels[0].textContent) : el.value;
-          } else if (el.type === 'checkbox') value = el.checked ? 'Yes' : 'No';
-          else if (el.tagName === 'SELECT') value = [...el.selectedOptions].map((o) => clean(o.textContent)).join(', ');
-          else value = clean(el.value);
-          if (!value) continue;
-          const question = labelFor(el);
-          if (!values.has(question)) values.set(question, value);
-        }
-        return [...values].map(([question, answer]) => ({ question, answer }));
-      }
-    });
-    const answers = frames.flatMap((f) => f.result || []);
+    const target = await injectAutofill(tab.id);
+    const frames = await chrome.scripting.executeScript({ target, func: () => window.__applylog && window.__applylog.answers() });
+    // Earlier steps of a multi-page form are gone from the page; autofill kept them as you went
+    const stepsKey = `steps_${tab.id}`;
+    const { [stepsKey]: steps } = await chrome.storage.session.get(stepsKey);
+    let origin = '';
+    try { origin = new URL(tab.url).origin; } catch (e) { /* leave earlier steps out */ }
+    const merged = new Map(steps && steps.origin === origin && Date.now() - steps.updated < 3 * 60 * 60 * 1000 ? steps.answers : []);
+    for (const { question, answer } of frames.flatMap((f) => f.result || [])) {
+      if (answer) merged.set(question, answer);
+    }
+    const answers = [...merged].map(([question, answer]) => ({ question, answer }));
     const { lastAutofillResume } = await chrome.storage.local.get('lastAutofillResume');
     const resume = lastAutofillResume && lastAutofillResume.url === $('url').value.trim()
       ? lastAutofillResume.resume : await getActiveResume();
@@ -437,6 +422,7 @@ $('recordBtn').addEventListener('click', async () => {
     const records = applicationRecords.filter((x) => x.url !== job.url);
     records.unshift(job);
     await chrome.storage.local.set({ applicationRecords: records.slice(0, 20) });
+    await chrome.storage.session.remove(stepsKey);
     showAutofillMsg(`✓ Saved ${answers.length} answers${resume ? ` and ${resume.label} resume` : ''} on this device.`, 'ok');
     // You've submitted it, so mark the sheet row Applied (unless it's already further along)
     if (['', 'Saved'].includes($('status').value)) $('status').value = 'Applied';
