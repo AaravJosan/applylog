@@ -3,7 +3,8 @@
  * reach, in the extension's isolated world, so page scripts never see your
  * profile. Defines window.__applylog = { fill, capture, answers, job }.
  *
- * Fills only empty fields and never submits. Colours:
+ * Fills only empty fields and never submits. On multi-step forms it clicks Next / Continue
+ * once a step has nothing left for you, and stops wherever something does. Colours:
  *   green = from your profile, blue = from your saved answers (double-check),
  *   purple = drafted or picked by Claude (check it), red = couldn't be filled (yours to answer).
  *
@@ -514,8 +515,10 @@
 
   // ---------- One pass over the page ----------
 
+  /** Returns how many fields it hadn't seen before, so a step that didn't change isn't advanced twice. */
   async function pass() {
-    const fresh = (el) => { if (seen.has(el) || !el.isConnected) return false; seen.add(el); return true; };
+    let found = 0;
+    const fresh = (el) => { if (seen.has(el) || !el.isConnected) return false; seen.add(el); found++; return true; };
 
     // Resume upload
     const files = all('input[type=file]');
@@ -692,6 +695,35 @@
         }, () => PLACEHOLDER_TEXT.test(textOf(btn)), { required });
       } else unfilled(btn, q, required);
     }
+    return found;
+  }
+
+  // ---------- Moving to the next step ----------
+
+  const NEXT = /^(next|continue|next step|next page|proceed|save (and|&) (continue|next)|continue to next step|review( your application)?)$/i;
+  const NEVER_CLICK = /submit|apply|send|finish|complete|confirm|sign/i;
+  const MAX_STEPS = 20;
+  let steps = 0;
+
+  function nextButton() {
+    return all('button, input[type=submit], input[type=button], [role=button]').find((b) => {
+      if (!visible(b) || b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
+      const names = [textOf(b), b.value, b.getAttribute('aria-label')].map(clean).filter(Boolean);
+      return names.some((t) => NEXT.test(t)) && !names.some((t) => NEVER_CLICK.test(t));
+    });
+  }
+
+  /** Clicks Next once this step is done: nothing required left empty, nothing of Claude's to read, no errors showing. */
+  async function advance(rep, found, drafting) {
+    if (!found || rep.missing.length || steps >= MAX_STEPS) return;
+    if (drafting && await drafting) return;
+    await sleep(800);
+    if (all('[aria-invalid=true]').some(visible)) return;
+    if (all('input[type=password]').some((el) => visible(el) && !el.value)) return; // a sign-in step is yours
+    const btn = nextButton();
+    if (!btn) return;
+    steps++;
+    press(btn);
   }
 
   // ---------- Drafting open-ended answers ----------
@@ -789,8 +821,12 @@
     report.asks.push({ el, q: tidy(q), options, apply, stillEmpty, multi, required, hint: hintFor(q) });
   }
 
-  /** Sends written and multiple-choice questions to Claude in one batch, then fills what comes back. */
+  /**
+   * Sends written and multiple-choice questions to Claude in one batch, then fills what comes back.
+   * Resolves true if the step should wait for you: a required question went unanswered, or Claude wrote something to read.
+   */
   async function draftAnswers(asks) {
+    let wait = false;
     const questions = asks.map((a, i) => {
       a.id = `q${i + 1}`;
       return a.options
@@ -810,7 +846,7 @@
     const done = (el, color, title) => { outlineTarget(el).style.outline = color ? `2px solid ${color}` : ''; el.title = title || ''; };
     for (const a of asks) {
       const text = byId.get(a.id);
-      const unanswered = () => done(a.el, COLORS.missing, why);
+      const unanswered = () => { done(a.el, COLORS.missing, why); if (a.required) wait = true; };
       if (a.options) {
         const wanted = text ? (a.multi ? text.split(/\s*\|\s*/) : [text]) : [];
         const picks = [...new Set(wanted.map((w) => a.options.findIndex((o) => norm(o) === norm(w))).filter((i) => i >= 0))];
@@ -828,11 +864,13 @@
       if (value && !el.value.trim()) { // don't overwrite anything you typed meanwhile
         setValue(el, el.maxLength > 0 ? value.slice(0, el.maxLength) : value);
         await settle();
+        if (!a.short) wait = true;
         done(el, COLORS.draft, a.short ? 'Filled by Claude from your profile and resume. Check it before submitting.'
           : 'Drafted by Claude from your resume and the job description. Read and edit before submitting.');
       } else if (!el.value.trim()) unanswered();
       else done(el, ''); // you answered it yourself
     }
+    return wait;
   }
 
   // ---------- Public API ----------
@@ -854,10 +892,11 @@
     PAGE_JOB = job && job.description ? job : null;
     report = { filled: [], saved: [], missing: [], asks: [] };
     seen = new WeakSet();
-    await pass();
+    steps = 0;
+    const found = await pass();
     const result = { ...report, drafting: report.asks.map((a) => a.q.slice(0, 120)) };
     delete result.asks;
-    if (report.asks.length) draftAnswers(report.asks);
+    advance(report, found, report.asks.length ? draftAnswers(report.asks) : null);
     trackSteps();
 
     // Multi-step forms (Workday, LinkedIn Easy Apply) swap in new fields without
@@ -872,8 +911,8 @@
         running = true;
         report = { filled: [], saved: [], missing: [], asks: [] };
         try {
-          await pass();
-          if (report.asks.length) draftAnswers(report.asks);
+          const found = await pass();
+          advance(report, found, report.asks.length ? draftAnswers(report.asks) : null);
         } finally { running = false; }
       }, 800);
     });
