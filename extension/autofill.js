@@ -23,6 +23,11 @@
     ['website', /portfolio|website|personal (site|url)|\bblog\b/],
     ['workAuth', /authori[sz]ed to work|work authori[sz]ation|eligible to work|right to work|legally (able|permitted) to work/],
     ['sponsorship', /sponsor/],
+    // Export control screens list countries, so these come before the country rule
+    ['sanctioned', /\bcuba|\biran\b|north korea|\bsyria|crimea|sanction|embargo|export control/],
+    ['usCitizen', /\bu ?s citizen|citizen of the united states|united states citizen|american citizen/],
+    ['clearance', /security clearance|\bclearance\b/],
+    ['government', /government|public official|civil serv|federal (employee|agency)/],
     ['over18', /18 years|at least 18|age of 18|over 18|18 or older/],
     ['relocate', /relocat/],
     ['inOffice', /in.office|on.?site|hybrid|commut|days (a|per) week|\boffice\b/],
@@ -117,8 +122,8 @@
   const COLORS = { profile: '#34a853', saved: '#4285f4', draft: '#a142f4', missing: '#d93025' };
 
   // Never guessed by Claude: legal status, demographics and money stay yours to answer
-  const NEVER_ASK = new Set(['workAuth', 'sponsorship', 'over18', 'gender', 'hispanic', 'race', 'veteran', 'disability', 'pronouns', 'salary']);
-  const NEVER_ASK_TEXT = /acknowledg|consent|certif|attest|\bagree|privacy|criminal|convict|felony|background check|signature|lgbt|sexual orientation|transgender|gender identity|ethnicit|\brace\b|disabilit|veteran|religio/i;
+  const NEVER_ASK = new Set(['workAuth', 'sponsorship', 'over18', 'sanctioned', 'usCitizen', 'clearance', 'government', 'gender', 'hispanic', 'race', 'veteran', 'disability', 'pronouns', 'salary']);
+  const NEVER_ASK_TEXT = /acknowledg|consent|certif|attest|\bagree|privacy|criminal|convict|felony|background check|signature|lgbt|sexual orientation|transgender|gender identity|ethnicit|\brace\b|disabilit|veteran|religio|citizen|nationalit|government|public official|sanction|embargo|export control|clearance|\bcuba|\biran\b|north korea|\bsyria|crimea/i;
   const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
 
   // Questions worth a written answer rather than a lookup
@@ -755,6 +760,8 @@
   /** Your own profile answer for a question, passed to Claude so it maps rather than guesses. */
   const HINT_LABELS = {
     workAuth: 'authorized to work', sponsorship: 'needs visa sponsorship', over18: '18 or older', relocate: 'willing to relocate',
+    sanctioned: 'citizen of a sanctioned country', usCitizen: 'U.S. citizen', clearance: 'holds a security clearance',
+    government: 'has worked for a government or been a public official',
     inOffice: 'OK working in office', startDate: 'earliest start date', gradDate: 'graduation date', gradMonth: 'graduation month',
     gradYear: 'graduation year', degree: 'degree', major: 'major', school: 'school', gender: 'gender', race: 'race',
     hispanic: 'Hispanic or Latino', veteran: 'veteran status', disability: 'disability status', pronouns: 'pronouns', salary: 'salary expectation'
@@ -834,6 +841,7 @@
     P = { ...profile };
     P.fullName = [P.firstName, P.lastName].filter(Boolean).join(' ');
     P.preferredName = P.preferredName || P.firstName;
+    P.website = P.website || P.github; // no portfolio site: your GitHub stands in
     P.location = [P.city, P.state].filter(Boolean).join(', ');
     P.country = countryName(P.country, P.phone);
     const grad = norm(P.gradDate);
