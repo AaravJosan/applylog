@@ -20,9 +20,13 @@
     Already in your sheet. Changes will update that row.
   </div>
 
+  <label id="resumeRow" class="resume-pick" hidden>Resume for this application
+    <select id="resumePick"></select>
+  </label>
   <button type="button" id="autofillBtn" class="secondary">✎ Autofill this application</button>
   <div id="autofillMsg" class="msg" role="status" aria-live="polite"></div>
   <button type="button" id="rememberBtn" class="link-btn remember">Remember my answers on this page</button>
+  <button type="button" id="recordBtn" class="link-btn remember">Save what I submitted</button>
 
   <form id="jobForm" autocomplete="off">
     <section>
@@ -66,6 +70,8 @@
         <label>Contact name<input id="contact" placeholder="Who you know there"></label>
       </div>
       <button type="button" id="findPeople" class="ghost">Find my LinkedIn connections at this company ↗</button>
+      <label>Next action<input id="nextAction" placeholder="Follow up with recruiter, prep for interview…"></label>
+      <label>Action due<input id="dueDate" type="date"></label>
       <label>Notes<textarea id="notes" rows="2" placeholder="Salary, recruiter, next steps…"></textarea></label>
     </section>
 
@@ -73,6 +79,32 @@
     <div id="msg" class="msg" role="status" aria-live="polite"></div>
   </form>
 
+  <section id="dashboard">
+    <h2>Needs attention</h2>
+    <div id="dashboardMsg" class="hint">Loading…</div>
+    <ul id="attentionList" class="attention-list"></ul>
+  </section>
+
+  <section id="outreach">
+    <h2>Outreach</h2>
+    <div id="dueLine" class="due" hidden></div>
+    <label>Company<input id="oCompany" placeholder="Company you're reaching out to"></label>
+    <ul id="people" class="people"></ul>
+    <details id="addPerson">
+      <summary>Add a person</summary>
+      <label>Name<input id="oName"></label>
+      <label>LinkedIn URL<input id="oProfileUrl" type="url" placeholder="https://www.linkedin.com/in/…"></label>
+      <div class="row">
+        <label>Role<input id="oRole" placeholder="Recruiter, SWE…"></label>
+        <label>Status<select id="oStatus"></select></label>
+      </div>
+      <label>Notes<textarea id="oNotes" rows="2" placeholder="How you know them, what you said…"></textarea></label>
+      <button type="button" id="oAdd" class="secondary">Add to outreach</button>
+    </details>
+    <div id="oMsg" class="msg" role="status" aria-live="polite"></div>
+  </section>
+
+  <script src="resumes.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

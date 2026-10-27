@@ -17,21 +17,46 @@ const SHEET_NAME = 'Applications';
 
 const HEADERS = [
   'Date added', 'Job title', 'Company', 'Location', 'URL',
-  'Status', 'Connected on LinkedIn', 'Contact', 'Referral', 'Notes', 'Last updated'
+  'Status', 'Connected on LinkedIn', 'Contact', 'Referral', 'Notes', 'Last updated', 'Next action', 'Action due'
 ];
 const FIELDS = ['title', 'company', 'location', 'url', 'status', 'connected', 'contact', 'referral', 'notes'];
 const URL_COL = 5;
+// Keep existing columns in place so current sheet data migrates without shifting.
+const UPDATED_COL = 11;
+const ACTION_COL = 12;
+const DUE_COL = 13;
 
 const OPTIONS = {
   6: ['Saved', 'Applied', 'Interviewing', 'Offer', 'Rejected', 'Withdrawn'], // Status
   7: ['No', 'Request sent', 'Yes'],                                          // Connected
   9: ['Not asked', 'Asked', 'Received', 'Declined']                          // Referral
 };
+// Connected, Contact and Referral describe the company, not one job, so a
+// change on any row copies to every other row at the same company.
+const SHARED = { connected: 7, contact: 8, referral: 9 };
+const SHARED_DEFAULTS = { connected: 'No', contact: '', referral: 'Not asked' };
+
+// Outreach tab: one row per person you're reaching out to
+const OUTREACH_SHEET = 'Outreach';
+const O_HEADERS = [
+  'Date added', 'Name', 'Company', 'Role', 'LinkedIn URL', 'Job URL',
+  'Status', 'Last contact', 'Follow up on', 'Notes', 'Last updated'
+];
+const O_FIELDS = ['name', 'company', 'role', 'profileUrl', 'jobUrl', 'status']; // columns 2-7
+const O_COL = { company: 3, profileUrl: 5, status: 7, lastContact: 8, followUp: 9, notes: 10, updated: 11 };
+const O_STATUSES = ['To contact', 'Request sent', 'Connected', 'Messaged', 'Replied',
+  'Referral asked', 'Referral received', 'No response'];
+// Days until a follow-up is due after moving to each status. Connected means
+// they accepted, so the follow-up (your first message) is due right away.
+const FOLLOW_UP_DAYS = { 'Request sent': 7, 'Connected': 0, 'Messaged': 5, 'Referral asked': 5 };
+// Statuses that mean you just reached out, so they stamp "Last contact"
+const CONTACT_STATUSES = ['Request sent', 'Messaged', 'Referral asked'];
 
 /** Run once from the editor to create and format the sheet. */
 function setup() {
   const sheet = getSheet_();
   formatSheet_(sheet);
+  formatOutreach_(getOutreach_());
 }
 
 function doGet() {
@@ -48,27 +73,52 @@ function doPost(e) {
     const sheet = getSheet_();
 
     if (data.action === 'ping') return json_({ ok: true, sheet: sheet.getName() });
+    if (data.action === 'outreachList') return json_(outreachList_(data));
+    if (data.action === 'outreachSave') return json_(outreachSave_(data));
+    if (data.action === 'dashboard') return json_(dashboard_());
 
     const row = findRowByUrl_(sheet, data.url);
 
     if (data.action === 'lookup') {
-      if (row < 0) return json_({ ok: true, found: false });
+      if (row < 0) return json_({ ok: true, found: false, shared: companyShared_(sheet, data.company, -1) });
       const values = sheet.getRange(row, 2, 1, FIELDS.length).getValues()[0];
       const job = {};
       FIELDS.forEach((f, i) => { job[f] = String(values[i]); });
+      job.nextAction = String(sheet.getRange(row, ACTION_COL).getValue() || '');
+      const due = sheet.getRange(row, DUE_COL).getValue();
+      job.dueDate = due instanceof Date ? Utilities.formatDate(due, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(due || '');
       return json_({ ok: true, found: true, row: row, job: job });
     }
 
     if (data.action === 'save') {
       const values = FIELDS.map((f) => clean_(data[f]));
       const now = new Date();
+      const nextAction = clean_(data.nextAction);
+      const dueDate = parseDate_(data.dueDate);
+      const company = data.company;
       if (row > 0) {
+        const prev = sheet.getRange(row, 1, 1, HEADERS.length).getValues()[0];
         sheet.getRange(row, 2, 1, values.length).setValues([values]);
-        sheet.getRange(row, HEADERS.length).setValue(now);
+        sheet.getRange(row, UPDATED_COL).setValue(now);
+        sheet.getRange(row, ACTION_COL, 1, 2).setValues([[nextAction, dueDate || '']]);
+        const changed = Object.values(SHARED).filter((c) => String(prev[c - 1]) !== values[c - 2]);
+        syncCompany_(sheet, row, changed);
         return json_({ ok: true, action: 'updated', row: row });
       }
-      sheet.appendRow([now].concat(values, [now]));
-      return json_({ ok: true, action: 'added', row: sheet.getLastRow() });
+      // A new job starts with what you already have at that company, unless
+      // the popup set something new, which then applies company-wide.
+      const known = companyShared_(sheet, company, -1);
+      const changed = [];
+      Object.keys(SHARED).forEach((f) => {
+        const i = SHARED[f] - 2;
+        if (values[i] === SHARED_DEFAULTS[f] && known[f]) values[i] = clean_(known[f]);
+        else if (values[i] !== (known[f] || SHARED_DEFAULTS[f])) changed.push(SHARED[f]);
+      });
+      // Set cells directly: appendRow is rejected on a sheet holding a table
+      const next = sheet.getLastRow() + 1;
+      sheet.getRange(next, 1, 1, HEADERS.length).setValues([[now].concat(values, [now, nextAction, dueDate || ''])]);
+      syncCompany_(sheet, next, changed);
+      return json_({ ok: true, action: 'added', row: next });
     }
 
     return json_({ ok: false, error: 'Unknown action' });
@@ -79,34 +129,270 @@ function doPost(e) {
   }
 }
 
+/**
+ * Simple trigger: when you edit Connected, Contact or Referral by hand, copy
+ * the change to the other rows at the same company. Script writes don't fire
+ * onEdit, so the copies don't trigger it again.
+ */
+function onEdit(e) {
+  const range = e && e.range;
+  if (!range || range.getSheet().getName() !== SHEET_NAME) return;
+  const cols = Object.values(SHARED).filter((c) => c >= range.getColumn() && c <= range.getLastColumn());
+  if (!cols.length) return;
+  const sheet = range.getSheet();
+  for (let r = Math.max(range.getRow(), 2); r <= range.getLastRow(); r++) syncCompany_(sheet, r, cols);
+}
+
+/**
+ * Copy the given shared columns from `row` to every other row with the same
+ * company. A value that isn't one of the column's dropdown options (say a
+ * Status pasted one column over) stays on its own row instead of spreading.
+ */
+function syncCompany_(sheet, row, cols) {
+  cols = cols.filter((c) => !OPTIONS[c] || OPTIONS[c].includes(String(sheet.getRange(row, c).getValue())));
+  if (!cols.length) return;
+  const last = sheet.getLastRow();
+  if (last < 2) return;
+  const data = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
+  const src = data[row - 2];
+  const key = companyKey_(src[2]);
+  if (!key) return;
+  data.forEach((r, i) => {
+    if (i === row - 2 || companyKey_(r[2]) !== key) return;
+    cols.forEach((c) => {
+      if (r[c - 1] !== src[c - 1]) sheet.getRange(i + 2, c).setValue(src[c - 1]);
+    });
+  });
+}
+
+/** Shared values already recorded for a company, from its first matching row. */
+function companyShared_(sheet, company, skipRow) {
+  const key = companyKey_(company);
+  const last = sheet.getLastRow();
+  if (!key || last < 2) return {};
+  const data = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
+  const i = data.findIndex((r, j) => j + 2 !== skipRow && companyKey_(r[2]) === key);
+  if (i < 0) return {};
+  const out = {};
+  Object.keys(SHARED).forEach((f) => { out[f] = String(data[i][SHARED[f] - 1] || ''); });
+  return out;
+}
+
+/** "Amazon (Annapurna Labs)", "amazon", "Amazon.com, Inc." → "amazon" */
+function companyKey_(name) {
+  return String(name || '').toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\.com\b/g, ' ')
+    .replace(/[,.]/g, ' ')
+    .replace(/\b(inc|llc|ltd|corp|corporation|co|company|technologies|labs)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
 function getSheet_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet) sheet = ss.insertSheet(SHEET_NAME);
-  if (sheet.getLastRow() === 0) {
-    sheet.appendRow(HEADERS);
-    formatSheet_(sheet);
-  }
+  if (sheet.getLastRow() === 0) formatSheet_(sheet);
   return sheet;
 }
 
 function formatSheet_(sheet) {
-  const header = sheet.getRange(1, 1, 1, HEADERS.length);
-  header.setValues([HEADERS]).setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff');
-  sheet.setFrozenRows(1);
-
   const maxRows = Math.max(sheet.getMaxRows() - 1, 999);
-  Object.keys(OPTIONS).forEach((col) => {
-    const rule = SpreadsheetApp.newDataValidation()
+  const dropdowns = Object.keys(OPTIONS).map((col) => () =>
+    sheet.getRange(2, Number(col), maxRows, 1).setDataValidation(SpreadsheetApp.newDataValidation()
       .requireValueInList(OPTIONS[col], true)
       .setAllowInvalid(true)
-      .build();
-    sheet.getRange(2, Number(col), maxRows, 1).setDataValidation(rule);
-  });
+      .build()));
+  tryEach_('Applications', [
+    () => sheet.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS])
+      .setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff'),
+    () => sheet.setFrozenRows(1),
+    () => [110, 240, 160, 150, 260, 110, 150, 150, 110, 260, 110, 240, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w)),
+    () => sheet.getRange(2, 1, maxRows, 1).setNumberFormat('yyyy-mm-dd'),
+    () => sheet.getRange(2, UPDATED_COL, maxRows, 1).setNumberFormat('yyyy-mm-dd'),
+    () => sheet.getRange(2, DUE_COL, maxRows, 1).setNumberFormat('yyyy-mm-dd')
+  ].concat(dropdowns));
+}
 
-  sheet.getRange(2, 1, maxRows, 1).setNumberFormat('yyyy-mm-dd');
-  sheet.getRange(2, HEADERS.length, maxRows, 1).setNumberFormat('yyyy-mm-dd');
-  [110, 240, 160, 150, 260, 110, 150, 150, 110, 260, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w));
+/** Popup summary: overdue next actions, stale applications, and outreach follow-ups due. */
+function dashboard_() {
+  const sheet = getSheet_();
+  const today = startOfDay_(new Date());
+  const cutoff = addDays_(today, -7);
+  const overdue = [];
+  const stale = [];
+  const last = sheet.getLastRow();
+  if (last >= 2) {
+    sheet.getRange(2, 1, last - 1, HEADERS.length).getValues().forEach((r) => {
+      if (!r[4]) return;
+      const status = String(r[5] || 'Saved');
+      if (['Rejected', 'Withdrawn'].includes(status)) return;
+      const item = {
+        title: String(r[1] || ''), company: String(r[2] || ''), url: String(r[4] || ''),
+        status, nextAction: String(r[ACTION_COL - 1] || ''),
+        dueDate: fmtDate_(r[DUE_COL - 1]), updated: fmtDate_(r[UPDATED_COL - 1])
+      };
+      if (r[DUE_COL - 1] instanceof Date && r[DUE_COL - 1] <= today) overdue.push(item);
+      if (r[UPDATED_COL - 1] instanceof Date && r[UPDATED_COL - 1] < cutoff) stale.push(item);
+    });
+  }
+  overdue.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  stale.sort((a, b) => a.updated.localeCompare(b.updated));
+  const outreach = outreachList_({ company: '' });
+  return {
+    ok: true, overdue: overdue.slice(0, 5), stale: stale.slice(0, 5),
+    overdueOutreach: outreach.due, outreachNames: outreach.dueNames
+  };
+}
+
+function parseDate_(value) {
+  if (!value) return null;
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return d.getFullYear() === Number(m[1]) && d.getMonth() === Number(m[2]) - 1 && d.getDate() === Number(m[3]) ? d : null;
+}
+
+/**
+ * Runs formatting steps, skipping any that a Google Sheets table rejects
+ * ("not allowed on cells in typed columns"); the table's column types already
+ * give dropdowns and dates. Sheets applies changes lazily, so flush inside the
+ * try or the error surfaces later, in unrelated code.
+ */
+function tryEach_(label, steps) {
+  steps.forEach((step) => {
+    try {
+      step();
+      SpreadsheetApp.flush();
+    } catch (e) {
+      console.warn(label + ' formatting skipped: ' + e.message);
+    }
+  });
+}
+
+function getOutreach_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(OUTREACH_SHEET);
+  if (!sheet) {
+    try {
+      sheet = ss.insertSheet(OUTREACH_SHEET, ss.getNumSheets());
+    } catch (e) {
+      throw new Error('Couldn’t create the Outreach tab (' + e.message + '). Add a blank tab named "'
+        + OUTREACH_SHEET + '" yourself (a plain sheet, not a table), then run setup again.');
+    }
+  }
+  // formatOutreach_ writes the headers. It sets cells directly instead of using
+  // appendRow, which a sheet holding a table rejects.
+  if (sheet.getLastRow() === 0) formatOutreach_(sheet);
+  return sheet;
+}
+
+function formatOutreach_(sheet) {
+  sheet.getRange(1, 1, 1, O_HEADERS.length).setValues([O_HEADERS]);
+  const maxRows = Math.max(sheet.getMaxRows() - 1, 999);
+  tryEach_('Outreach', [
+    () => sheet.getRange(1, 1, 1, O_HEADERS.length)
+      .setFontWeight('bold').setBackground('#1a73e8').setFontColor('#ffffff'),
+    () => sheet.setFrozenRows(1),
+    () => [110, 170, 150, 200, 240, 240, 130, 110, 110, 260, 110].forEach((w, i) => sheet.setColumnWidth(i + 1, w)),
+    () => sheet.getRange(2, O_COL.status, maxRows, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(O_STATUSES, true).setAllowInvalid(true).build()),
+    () => [1, O_COL.lastContact, O_COL.followUp, O_COL.updated].forEach((c) =>
+      sheet.getRange(2, c, maxRows, 1).setNumberFormat('yyyy-mm-dd')),
+    // Highlight rows whose follow-up date has arrived
+    () => sheet.setConditionalFormatRules([SpreadsheetApp.newConditionalFormatRule()
+      .whenFormulaSatisfied('=AND($I2<>"", $I2<=TODAY())')
+      .setBackground('#fef7e0')
+      .setRanges([sheet.getRange(2, 1, maxRows, O_HEADERS.length)])
+      .build()])
+  ]);
+}
+
+/** People at a company, plus how many follow-ups are due across the whole tab. */
+function outreachList_(data) {
+  const sheet = getOutreach_();
+  const company = String(data.company || '').trim().toLowerCase();
+  const today = startOfDay_(new Date());
+  const people = [];
+  const dueList = [];
+  outreachRows_(sheet).forEach((r) => {
+    const person = {
+      row: r.row, name: r.v[1], company: r.v[2], role: r.v[3], profileUrl: r.v[4], jobUrl: r.v[5],
+      status: r.v[6], lastContact: fmtDate_(r.v[7]), followUp: fmtDate_(r.v[8]), notes: r.v[9]
+    };
+    person.due = r.v[8] instanceof Date && r.v[8] <= today;
+    if (person.due) dueList.push(person.name + ' (' + person.company + ')');
+    if (company && String(person.company).trim().toLowerCase() === company) people.push(person);
+  });
+  return { ok: true, people: people, due: dueList.length, dueNames: dueList.slice(0, 5), sheetUrl: sheetUrl_(sheet) };
+}
+
+/** Adds a person, or updates them if they're already in the tab. */
+function outreachSave_(data) {
+  const sheet = getOutreach_();
+  const name = clean_(data.name);
+  const company = clean_(data.company);
+  if (!name || !company) return { ok: false, error: 'Name and company are required.' };
+
+  let row = Number(data.row) || -1;
+  if (row < 2 || row > sheet.getLastRow()) row = findOutreachRow_(sheet, data.profileUrl, name, company);
+
+  const now = new Date();
+  const status = O_STATUSES.indexOf(data.status) >= 0 ? data.status : 'To contact';
+  const values = O_FIELDS.map((f) => (f === 'status' ? status : clean_(data[f])));
+  const prev = row > 0 ? sheet.getRange(row, 1, 1, O_HEADERS.length).getValues()[0] : null;
+
+  // Dates change only when the status does, so editing notes doesn't reset a follow-up
+  let lastContact = prev ? prev[O_COL.lastContact - 1] : '';
+  let followUp = prev ? prev[O_COL.followUp - 1] : '';
+  if (!prev || prev[O_COL.status - 1] !== status) {
+    if (CONTACT_STATUSES.indexOf(status) >= 0) lastContact = now;
+    followUp = status in FOLLOW_UP_DAYS ? addDays_(startOfDay_(now), FOLLOW_UP_DAYS[status]) : '';
+  }
+  const notes = data.notes === undefined && prev ? prev[O_COL.notes - 1] : clean_(data.notes);
+
+  if (prev) {
+    sheet.getRange(row, 2, 1, O_HEADERS.length - 1)
+      .setValues([values.concat([lastContact, followUp, notes, now])]);
+    return { ok: true, action: 'updated', row: row };
+  }
+  const next = sheet.getLastRow() + 1;
+  sheet.getRange(next, 1, 1, O_HEADERS.length)
+    .setValues([[now].concat(values, [lastContact, followUp, notes, now])]);
+  return { ok: true, action: 'added', row: next };
+}
+
+function outreachRows_(sheet) {
+  const last = sheet.getLastRow();
+  if (last < 2) return [];
+  return sheet.getRange(2, 1, last - 1, O_HEADERS.length).getValues()
+    .map((v, i) => ({ row: i + 2, v: v }))
+    .filter((r) => String(r.v[1]).trim());
+}
+
+function findOutreachRow_(sheet, profileUrl, name, company) {
+  const url = normalizeProfile_(profileUrl);
+  const key = (name + '|' + company).toLowerCase();
+  const hit = outreachRows_(sheet).find((r) =>
+    (url && normalizeProfile_(r.v[4]) === url)
+    || (String(r.v[1]) + '|' + String(r.v[2])).toLowerCase() === key);
+  return hit ? hit.row : -1;
+}
+
+/** linkedin.com/in/jane-doe-123/?foo → linkedin.com/in/jane-doe-123 */
+function normalizeProfile_(url) {
+  const m = String(url || '').match(/linkedin\.com\/in\/([^/?#]+)/i);
+  return m ? m[1].toLowerCase() : String(url || '').trim().toLowerCase();
+}
+
+function sheetUrl_(sheet) {
+  return SpreadsheetApp.getActiveSpreadsheet().getUrl() + '#gid=' + sheet.getSheetId();
+}
+
+function startOfDay_(d) { return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function addDays_(d, n) { return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n); }
+function fmtDate_(v) {
+  return v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd') : String(v || '');
 }
 
 function findRowByUrl_(sheet, url) {
