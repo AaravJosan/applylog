@@ -142,6 +142,24 @@
   const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
   const textOf = (el) => clean(el ? el.textContent : '');
 
+  // SmartRecruiters (and other forms built from web components) keep each real <input>
+  // in a shadow root, which document.querySelectorAll never looks inside
+  function roots(root = document) {
+    const out = [root];
+    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) out.push(...roots(el.shadowRoot));
+    return out;
+  }
+  const all = (sel, root = document) => roots(root).flatMap((r) => [...r.querySelectorAll(sel)]);
+  // Parent and id lookups that step out of a shadow root to its host
+  const up = (el) => el.parentElement || el.getRootNode().host || null;
+  const byId = (el, id) => (el.getRootNode().getElementById && el.getRootNode().getElementById(id)) || document.getElementById(id);
+  // Text of the custom elements a field sits in ("resume-upload"), since its own label may just say "Choose a file"
+  const hostHints = (el) => {
+    const out = [];
+    for (let h = el.getRootNode().host; h; h = h.getRootNode().host) out.push(h.getAttribute('data-test'), h.getAttribute('label'));
+    return out.filter(Boolean).join(' ');
+  };
+
   // ---------- Working out what a field is asking ----------
 
   function questionFor(el, ownLabelIsOption = false) {
@@ -149,14 +167,14 @@
       const parts = [];
       if (el.labels) for (const l of el.labels) parts.push(textOf(l));
       const ids = el.getAttribute('aria-labelledby');
-      if (ids) for (const id of ids.split(/\s+/)) parts.push(textOf(document.getElementById(id)));
+      if (ids) for (const id of ids.split(/\s+/)) parts.push(textOf(byId(el, id)));
       parts.push(el.getAttribute('aria-label') || '');
       // Labels and aria-label often repeat each other; keep each piece once
       const unique = [...new Set(parts.map(clean).filter(Boolean))];
       const t = unique.filter((x) => !unique.some((y) => y !== x && norm(y).includes(norm(x)))).join(' ');
       // Greenhouse's typed cover letter is labelled "Enter manually"; the question is the group's label
       const group = /^enter manually$/i.test(t) && el.closest('[role=group][aria-labelledby]');
-      if (group) return textOf(document.getElementById(group.getAttribute('aria-labelledby'))).slice(0, 250);
+      if (group) return textOf(byId(group, group.getAttribute('aria-labelledby'))).slice(0, 250);
       if (t) return t.slice(0, 250);
     }
     const box = el.closest(CONTAINERS);
@@ -170,9 +188,9 @@
       }
     }
     // Fall back to the nearest container whose only field is this one
-    let node = el.parentElement;
-    for (let i = 0; node && i < 4; i++, node = node.parentElement) {
-      const others = [...node.querySelectorAll('input:not([type=hidden]), select, textarea')]
+    let node = up(el);
+    for (let i = 0; node && i < 4; i++, node = up(node)) {
+      const others = all('input:not([type=hidden]), select, textarea', node)
         .filter((f) => f !== el && !(el.name && f.name === el.name));
       if (others.length) break;
       const lab = node.querySelector(TITLES);
@@ -183,10 +201,10 @@
     // field wrapper class. Walk up to the nearest single-field container and
     // use its preceding prompt text so open-ended questions still reach Claude.
     node = el;
-    for (let i = 0; node && i < 7; i++, node = node.parentElement) {
-      const parent = node.parentElement;
+    for (let i = 0; node && i < 7; i++, node = up(node)) {
+      const parent = up(node);
       if (!parent) break;
-      const fields = [...parent.querySelectorAll('input:not([type=hidden]), select, textarea')]
+      const fields = all('input:not([type=hidden]), select, textarea', parent)
         .filter((f) => visible(f));
       if (fields.length > 1) break;
       let sibling = node.previousElementSibling;
@@ -387,8 +405,8 @@
 
   function visibleOptions(el) {
     const id = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
-    const list = id && document.getElementById(id);
-    const opts = [...(list || document).querySelectorAll('[role=option]')].filter(visible);
+    const list = id && byId(el, id);
+    const opts = all('[role=option]', list || document).filter(visible);
     return opts.map((o) => ({ el: o, text: textOf(o), value: o.getAttribute('data-value') || '' }));
   }
 
@@ -418,9 +436,9 @@
   // though the number is visible, so select the matching country first.
   async function fillPhoneCountry(input) {
     if (!P.country) return false;
-    let group = input.parentElement;
-    for (let depth = 0; group && depth < 5; depth++, group = group.parentElement) {
-      const candidates = [...group.querySelectorAll('select, button, [role="combobox"], [aria-haspopup="listbox"]')]
+    let group = up(input);
+    for (let depth = 0; group && depth < 5; depth++, group = up(group)) {
+      const candidates = all('select, button, [role="combobox"], [aria-haspopup="listbox"]', group)
         .filter((el) => el !== input && visible(el));
       const scored = candidates.map((el) => {
         const hint = norm([el.getAttribute('aria-label'), el.getAttribute('title'), el.name,
@@ -481,8 +499,8 @@
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
     // Some upload widgets (Ashby's dropzone) only react to a drop
-    if (await waitFor(() => document.body.textContent.includes(RESUME.name), 1500)) return;
-    const zone = input.closest('[role=presentation], [class*="drop" i], [class*="upload" i]') || input.parentElement;
+    if (await waitFor(() => roots().some((r) => (r === document ? r.body : r).textContent.includes(RESUME.name)), 1500)) return;
+    const zone = input.closest('[role=presentation], [class*="drop" i], [class*="upload" i]') || up(input);
     const dt = file();
     for (const type of ['dragenter', 'dragover', 'drop']) {
       zone.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
@@ -495,11 +513,12 @@
     const fresh = (el) => { if (seen.has(el) || !el.isConnected) return false; seen.add(el); return true; };
 
     // Resume upload
-    const files = [...document.querySelectorAll('input[type=file]')];
+    const files = all('input[type=file]');
     for (const input of files) {
       if (!fresh(input) || !RESUME || input.files.length || input.disabled) continue;
-      const q = norm([questionFor(input), input.name, input.id, input.getAttribute('data-automation-id')].join(' '));
-      if (/cover/.test(q)) continue;
+      const q = norm([questionFor(input), input.name, input.id, input.getAttribute('data-automation-id'), hostHints(input)].join(' '));
+      // SmartRecruiters' "Apply with resume" box parses the file into the form, over what we fill
+      if (/cover|apply with/.test(q)) continue;
       if (/resume|\bcv\b/.test(q) || files.length === 1) {
         await fillResume(input);
         mark(input.closest('div') || input, 'profile', '', 'resume');
@@ -507,7 +526,7 @@
     }
 
     // Searchable dropdowns (react-select, Ashby, LinkedIn typeaheads)
-    for (const el of document.querySelectorAll('input[role=combobox]')) {
+    for (const el of all('input[role=combobox]')) {
       if (!fresh(el) || el.disabled || el.type === 'search' || !visible(el)) continue;
       const q = questionFor(el);
       const ans = answerFor(el, q);
@@ -530,12 +549,12 @@
     // Uploads offered as "attach or enter manually" (cover letters and the like): open the text box so Claude drafts it.
     // Not the resume: that's your file, attached above.
     if (DRAFTS) {
-      for (const b of document.querySelectorAll('button')) {
+      for (const b of all('button')) {
         if (!/^enter manually$/i.test(textOf(b)) || !fresh(b)) continue;
         const group = b.closest('[role=group], .field-wrapper, fieldset');
         const file = group && group.querySelector('input[type=file]');
         if (!group || (file && file.files.length) || group.querySelector('textarea')) continue;
-        const label = group.getAttribute('aria-labelledby') && document.getElementById(group.getAttribute('aria-labelledby'));
+        const label = group.getAttribute('aria-labelledby') && byId(group, group.getAttribute('aria-labelledby'));
         if (/resume|\bcv\b/i.test(label ? textOf(label) : textOf(group))) continue;
         press(b);
         await waitFor(() => group.querySelector('textarea'), 1500);
@@ -544,7 +563,7 @@
 
     // Plain text boxes and native dropdowns
     const SKIP = ['hidden', 'file', 'submit', 'button', 'reset', 'image', 'password', 'checkbox', 'radio', 'search'];
-    for (const el of document.querySelectorAll('input, textarea, select')) {
+    for (const el of all('input, textarea, select')) {
       if (el.getAttribute('role') === 'combobox' || SKIP.includes((el.type || '').toLowerCase())) continue;
       if (!fresh(el) || el.disabled || el.readOnly || !visible(el)) continue;
       if (el.getAttribute('aria-hidden') === 'true') continue; // dropdowns' hidden "required" inputs
@@ -582,7 +601,7 @@
 
     // Radio groups
     const groups = new Map();
-    for (const r of document.querySelectorAll('input[type=radio]')) {
+    for (const r of all('input[type=radio]')) {
       if (r.name && visible(r.closest('label') || r.parentElement || r)) {
         if (!groups.has(r.name)) groups.set(r.name, []);
         groups.get(r.name).push(r);
@@ -604,7 +623,7 @@
 
     // Checkbox lists ("Select all that apply"). A lone checkbox is a consent box and stays yours.
     const boxes = new Map();
-    for (const c of document.querySelectorAll('input[type=checkbox]')) {
+    for (const c of all('input[type=checkbox]')) {
       const box = c.closest('fieldset, [role=group], .checkbox-group, [class*="checkbox" i][class*="group" i], .field-wrapper');
       if (box && visible(c.closest('label') || c.parentElement || c)) {
         if (!boxes.has(box)) boxes.set(box, []);
@@ -624,7 +643,7 @@
           () => !list.some((c) => c.checked), { multi: true, required });
       } else unfilled(box, q, required);
     }
-    for (const c of document.querySelectorAll('input[type=checkbox]')) {
+    for (const c of all('input[type=checkbox]')) {
       const inList = [...boxes.values()].some((l) => l.length > 1 && l.includes(c));
       if (inList || c.checked || !fresh(c) || !visible(c.closest('label') || c)) continue;
       const q = questionFor(c) || questionFor(c, true);
@@ -633,7 +652,7 @@
 
     // Yes/No button pairs (Ashby and others)
     const pairs = new Set();
-    for (const b of document.querySelectorAll('button')) {
+    for (const b of all('button')) {
       if (/^(yes|no)$/i.test(textOf(b)) && b.parentElement) pairs.add(b.parentElement);
     }
     for (const box of pairs) {
@@ -652,7 +671,7 @@
     }
 
     // Dropdown buttons that open a listbox (Workday)
-    for (const btn of document.querySelectorAll('button[aria-haspopup=listbox]')) {
+    for (const btn of all('button[aria-haspopup=listbox]')) {
       if (!fresh(btn) || btn.disabled || !visible(btn) || !PLACEHOLDER_TEXT.test(textOf(btn))) continue;
       const q = questionFor(btn, true);
       const ans = answerFor(btn, q);
@@ -863,7 +882,7 @@
       return clean(el.getAttribute('aria-label') || labels[0] || el.name || el.id || 'Unlabeled field');
     };
     const values = new Map();
-    for (const el of document.querySelectorAll('input,select,textarea')) {
+    for (const el of all('input,select,textarea')) {
       if (el.type === 'hidden' || el.type === 'file' || el.type === 'submit' || el.type === 'button' || el.disabled) continue;
       if (!visible(el)) continue;
       let value = '';
@@ -916,23 +935,23 @@
       if (ruleFor(norm(q)) || /\bwhy\b|tell us|describe|cover letter|explain/i.test(q)) return;
       out.set(norm(q), { q, a });
     };
-    for (const el of document.querySelectorAll('input[role=combobox]')) {
+    for (const el of all('input[role=combobox]')) {
       const s = bridge(el, { op: 'read' });
       add(questionFor(el), s ? s.value.join(', ') : el.value);
     }
-    for (const el of document.querySelectorAll('input:not([type]), input[type=text], input[type=number], input[type=email], input[type=tel], input[type=url]')) {
+    for (const el of all('input:not([type]), input[type=text], input[type=number], input[type=email], input[type=tel], input[type=url]')) {
       if (el.getAttribute('role') !== 'combobox' && visible(el)) add(questionFor(el), el.value);
     }
-    for (const el of document.querySelectorAll('select')) {
+    for (const el of all('select')) {
       if (el.selectedIndex > 0 && visible(el)) add(questionFor(el), el.options[el.selectedIndex].text);
     }
-    for (const r of document.querySelectorAll('input[type=radio]:checked')) {
+    for (const r of all('input[type=radio]:checked')) {
       add(questionFor(r, true), [...(r.labels || [])].map(textOf).join(' ') || r.value);
     }
-    for (const b of document.querySelectorAll('button[aria-pressed=true]')) {
+    for (const b of all('button[aria-pressed=true]')) {
       if (/^(yes|no)$/i.test(textOf(b))) add(questionFor(b, true), textOf(b));
     }
-    for (const b of document.querySelectorAll('button[aria-haspopup=listbox]')) {
+    for (const b of all('button[aria-haspopup=listbox]')) {
       if (!PLACEHOLDER_TEXT.test(textOf(b))) add(questionFor(b, true), textOf(b));
     }
     return [...out.values()];
