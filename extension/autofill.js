@@ -388,21 +388,33 @@
     try { return JSON.parse(res); } catch (e) { return null; }
   }
 
+  // Dropdowns you can type into. Not all say role=combobox; some only announce their suggestion list.
+  const COMBO = 'input[role=combobox], input[aria-autocomplete=list], input[aria-autocomplete=both], input[aria-haspopup=listbox]';
+
+  // What to type into a search-as-you-type dropdown, best first. Your own wording ("B.S.") filters a list
+  // that says "Bachelor's Degree" down to nothing, so degrees also search by their level.
+  const DEGREE_WORDS = { bachelor: ['Bachelor'], master: ['Master'], doctorate: ['Doctor', 'PhD'], associate: ['Associate'] };
+  function searchTerms(ans) {
+    if (LOCATION_KEYS.has(ans.key)) return [P.city || ans.value];
+    const level = degreeLevel(norm(ans.value));
+    return [...new Set([ans.value, ...(level ? DEGREE_WORDS[level] : [])])];
+  }
+  const choose = (opts, ans) => (LOCATION_KEYS.has(ans.key) ? pickLocation(opts) : pickOption(opts, ans.value));
+
   async function fillReactSelect(el, ans) {
-    let state = bridge(el, { op: 'read' });
+    const state = bridge(el, { op: 'read' });
     if (!state) return null; // not a react-select
     if (state.value.length) return true;
     const asOptions = (s) => s.options.map((text, i) => ({ text, value: text, i }));
-    let choice = pickOption(asOptions(state), ans.value);
-    if (!choice && LOCATION_KEYS.has(ans.key) && !state.options.length) {
-      // Location pickers search as you type
-      bridge(el, { op: 'search', text: P.city || ans.value });
-      state = await waitFor(() => { const s = bridge(el, { op: 'read' }); return s && s.options.length ? s : null; });
-      choice = state && pickLocation(asOptions(state));
-    } else if (!choice && !state.options.length) {
-      bridge(el, { op: 'search', text: ans.value });
-      state = await waitFor(() => { const s = bridge(el, { op: 'read' }); return s && s.options.length ? s : null; }, 3000);
-      choice = state && pickOption(asOptions(state), ans.value);
+    let choice = state.options.length ? choose(asOptions(state), ans) : null;
+    // Lists that only fill in as you type
+    if (!choice && !state.options.length) {
+      for (const text of searchTerms(ans)) {
+        bridge(el, { op: 'search', text });
+        const s = await waitFor(() => { const r = bridge(el, { op: 'read' }); return r && r.options.length ? r : null; }, 3000);
+        choice = s && choose(asOptions(s), ans);
+        if (choice) break;
+      }
     }
     if (!choice) return false;
     bridge(el, { op: 'select', index: choice.i });
@@ -418,14 +430,25 @@
 
   async function fillCombobox(el, ans) {
     if (el.value.trim()) return true;
-    const query = LOCATION_KEYS.has(ans.key) ? (P.city || ans.value) : ans.value;
+    const options = (ms) => waitFor(() => { const o = visibleOptions(el); return o.length ? o : null; }, ms);
+    // Open the list and choose from everything it offers; only type a search when that finds nothing
     el.focus();
-    setValue(el, query);
-    const opts = await waitFor(() => { const o = visibleOptions(el); return o.length ? o : null; }, 3000);
-    const choice = opts && (LOCATION_KEYS.has(ans.key) ? pickLocation(opts) : pickOption(opts, ans.value));
-    if (!choice) { setValue(el, ''); return false; }
-    press(choice.el);
-    return true;
+    press(el);
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true }));
+    let opts = await options(800);
+    let choice = opts && choose(opts, ans);
+    for (const text of choice ? [] : searchTerms(ans)) {
+      setValue(el, text);
+      opts = await options(3000);
+      choice = opts && choose(opts, ans);
+      if (choice) break;
+    }
+    if (choice) { press(choice.el); return true; }
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    // A real combobox only takes its own options; a box that merely suggests takes your words
+    if (el.getAttribute('role') !== 'combobox') { setValue(el, ans.value); return true; }
+    setValue(el, '');
+    return false;
   }
 
   async function fillListboxButton(btn, ans) {
@@ -534,7 +557,7 @@
     }
 
     // Searchable dropdowns (react-select, Ashby, LinkedIn typeaheads)
-    for (const el of all('input[role=combobox]')) {
+    for (const el of all(COMBO)) {
       if (!fresh(el) || el.disabled || el.type === 'search' || !visible(el)) continue;
       const q = questionFor(el);
       const ans = answerFor(el, q);
@@ -572,7 +595,7 @@
     // Plain text boxes and native dropdowns
     const SKIP = ['hidden', 'file', 'submit', 'button', 'reset', 'image', 'password', 'checkbox', 'radio', 'search'];
     for (const el of all('input, textarea, select')) {
-      if (el.getAttribute('role') === 'combobox' || SKIP.includes((el.type || '').toLowerCase())) continue;
+      if (el.matches(COMBO) || SKIP.includes((el.type || '').toLowerCase())) continue;
       if (!fresh(el) || el.disabled || el.readOnly || !visible(el)) continue;
       if (el.getAttribute('aria-hidden') === 'true') continue; // dropdowns' hidden "required" inputs
       const q = questionFor(el);
@@ -591,6 +614,11 @@
         } else if (isDate) {
           const d = dateValue(ans.value, type);
           if (d) { setValue(el, d); ok = el.value === d; }
+        } else if (el.list && el.list.options.length) {
+          // A text box with a suggestion list: the suggestion that means your answer, else your own words
+          const opt = pickOption([...el.list.options].map((o) => ({ text: o.label || o.value, value: o.value })), ans.value);
+          setValue(el, opt ? opt.value : ans.value);
+          ok = true;
         } else if (!(el.tagName === 'TEXTAREA' && ans.source === 'profile' && ans.key !== 'address')) {
           setValue(el, ans.value);
           ok = true;
@@ -982,12 +1010,12 @@
       if (ruleFor(norm(q)) || /\bwhy\b|tell us|describe|cover letter|explain/i.test(q)) return;
       out.set(norm(q), { q, a });
     };
-    for (const el of all('input[role=combobox]')) {
+    for (const el of all(COMBO)) {
       const s = bridge(el, { op: 'read' });
       add(questionFor(el), s ? s.value.join(', ') : el.value);
     }
     for (const el of all('input:not([type]), input[type=text], input[type=number], input[type=email], input[type=tel], input[type=url]')) {
-      if (el.getAttribute('role') !== 'combobox' && visible(el)) add(questionFor(el), el.value);
+      if (!el.matches(COMBO) && visible(el)) add(questionFor(el), el.value);
     }
     for (const el of all('select')) {
       if (el.selectedIndex > 0 && visible(el)) add(questionFor(el), el.options[el.selectedIndex].text);
