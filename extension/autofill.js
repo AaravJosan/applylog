@@ -135,8 +135,10 @@
   let RESUME = null;
   let DRAFTS = false;
   let PAGE_JOB = null; // job details from the top page, when this form is in an iframe
+  let EXPERIENCE = []; // your jobs, most recent first
   let report = null;
   let seen = new WeakSet();
+  let grown = new WeakSet(); // work-history sections we've added entries to
   let observer = null;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -146,7 +148,14 @@
   const clean = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const norm = (s) => clean((s || '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-\[\].:*✱?()]+/g, ' ')).toLowerCase();
   const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
-  const textOf = (el) => clean(el ? el.textContent : '');
+  // Web components (SmartRecruiters) keep a button's or option's words in the page and slot them into
+  // a shadow root, where the element itself reads as empty
+  function textOf(el) {
+    if (!el) return '';
+    const own = clean(el.textContent);
+    const host = !own && el.querySelector && el.querySelector('slot') && el.getRootNode().host;
+    return host ? clean(host.textContent) : own;
+  }
 
   // SmartRecruiters (and other forms built from web components) keep each real <input>
   // in a shadow root, which document.querySelectorAll never looks inside
@@ -536,6 +545,181 @@
     }
   }
 
+  // ---------- Work history ----------
+
+  // Sections that list each job on its own: Workday's "Work Experience", SmartRecruiters' "Experience"
+  const EXP_HEADING = /^(work |professional |relevant )?(experience|employment|work history|employment history)( \d+)?$|^(work|job|employment) (experience|history)\b/;
+  const OTHER_SECTION = /educat|school|personal|contact|profile|resume|\bcv\b|language|skill|certif|question|website|social|link|address|reference|award|project|volunteer|document|message|voluntary|disclos|self identif/;
+  const HEADINGS = 'h1, h2, h3, h4, h5, h6, legend, [role=heading]';
+  const FIELDS = 'input:not([type=hidden]), select, textarea';
+
+  // A web component's button carries its name on the custom element around it ("Add experience entry")
+  const buttonNames = (b) => [textOf(b), b.value, b.getAttribute('aria-label'),
+    b.getRootNode().host && b.getRootNode().host.getAttribute('aria-label')].map(clean).filter(Boolean);
+  const findButton = (root, re) => all('button, [role=button]', root)
+    .find((b) => visible(b) && !b.disabled && buttonNames(b).some((t) => re.test(t)));
+  const addButton = (section) => all('button, [role=button]', section).find((b) => visible(b) && !b.disabled
+    && buttonNames(b).some((t) => /^\+?\s*add\b/i.test(t)) && !buttonNames(b).some((t) => OTHER_SECTION.test(norm(t))));
+
+  function experienceSections() {
+    const found = [];
+    for (const h of all(HEADINGS)) {
+      if (!EXP_HEADING.test(norm(textOf(h)))) continue;
+      // The widest box that's still only this section: SmartRecruiters opens a new entry below the heading's row
+      let section = null;
+      for (let node = up(h), i = 0; node && i < 6; node = up(node), i++) {
+        if (all(HEADINGS, node).some((x) => OTHER_SECTION.test(norm(textOf(x))))) break;
+        if (all('input[type=file], input[type=email]', node).length) break;
+        if (section || all(FIELDS, node).some(visible) || addButton(node)) section = node;
+      }
+      if (section) found.push(section);
+    }
+    // "Work Experience 1" inside "Work Experience" is the same section
+    return found.filter((s) => !found.some((o) => o !== s && o.contains(s)));
+  }
+
+  /** What a field in a work-history section asks for ("title", "startmonth", "endfull"…), or null. */
+  function jobField(el) {
+    const host = el.getRootNode().host;
+    const box = el.closest('[data-automation-id^="formField"]');
+    const own = norm([questionFor(el), el.name, el.id, el.getAttribute('data-automation-id'), el.placeholder, hostHints(el)].join(' '));
+    const near = own + ' ' + norm([questionFor(el, true), box && box.getAttribute('data-automation-id')].join(' '));
+    if (el.type === 'checkbox') return /current|present|still/.test(near + ' ' + norm(host ? host.textContent : '')) ? 'current' : null;
+    if (/descri|responsib|duties|achievement/.test(own)) return 'description';
+    const part = /\bmonth\b/.test(own) ? 'month' : /\byear\b/.test(own) ? 'year' : 'full';
+    if (/\bfrom\b|\bstart/.test(near)) return 'start' + part;
+    if (/\bto\b|\bend\b|\buntil\b/.test(near)) return 'end' + part;
+    if (/title|position|\brole\b/.test(own)) return 'title';
+    if (/company|employer|organi[sz]ation/.test(own)) return 'company';
+    return /location|city/.test(own) ? 'location' : null;
+  }
+
+  /**
+   * The section's fields by job: the nth title, nth company and nth start date belong together.
+   * Hidden ones count too, so a job whose end date "I currently work here" hid doesn't shift the next job's onto it.
+   */
+  function jobSlots(section) {
+    const slots = [];
+    const counts = {};
+    for (const el of all(FIELDS, section)) {
+      if (el.disabled || el.closest('.flatpickr-calendar')) continue; // a month picker's own year box
+      const key = jobField(el);
+      if (!key) continue;
+      const i = counts[key] = (counts[key] || 0) + 1;
+      (slots[i - 1] = slots[i - 1] || {})[key] = el;
+    }
+    return slots.filter(Boolean);
+  }
+
+  const filledIn = (el) => (el.tagName === 'SELECT' ? el.selectedIndex > 0 && !!el.value : !!el.value.trim());
+  const blankSlot = (slot) => ['title', 'company'].every((k) => !slot[k] || !filledIn(slot[k]));
+  // Already on the form, typed by you or read from your resume
+  const listed = (section, job) => {
+    const text = norm(section.textContent + ' ' + all(FIELDS, section).map((el) => el.value || '').join(' '));
+    return [job.title, job.company].filter(Boolean).every((v) => text.includes(norm(v)));
+  };
+
+  /** Month pickers that ignore typed text (flatpickr, on SmartRecruiters): step to the year, then click the month. */
+  async function pickMonth(el, y, m) {
+    if (!el.classList.contains('flatpickr-input')) return false;
+    const id = el.getAttribute('aria-controls');
+    press(el);
+    const cal = await waitFor(() => { const c = id && byId(el, id); return c && c.querySelector('.flatpickr-monthSelect-month') ? c : null; }, 1500);
+    if (!cal) return false;
+    const year = cal.querySelector('.cur-year');
+    for (let i = 0; i < 80 && year && +year.value !== y; i++) {
+      press(cal.querySelector(+year.value > y ? '.flatpickr-prev-month' : '.flatpickr-next-month'));
+      await sleep(60);
+    }
+    const label = new RegExp(`^${MONTHS[m - 1]}\\b.*\\b${y}$`, 'i');
+    const cell = [...cal.querySelectorAll('.flatpickr-monthSelect-month')].find((c) => label.test(c.getAttribute('aria-label') || ''));
+    if (!cell || cell.classList.contains('flatpickr-disabled')) {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return false;
+    }
+    press(cell);
+    await settle();
+    return !!el.value;
+  }
+
+  async function fillJobField(el, key, job) {
+    if (filledIn(el)) return false;
+    const date = key.startsWith('start') ? job.start : key.startsWith('end') ? job.end : '';
+    const [y, m] = (date || '').split('-').map(Number);
+    const monthName = m ? MONTHS[m - 1][0].toUpperCase() + MONTHS[m - 1].slice(1) : '';
+    let value = { title: job.title, company: job.company, location: job.location, description: job.description }[key];
+    if (key.endsWith('month')) value = monthName;
+    if (key.endsWith('year')) value = y ? String(y) : '';
+    if (key.endsWith('full')) {
+      if (!y || !m) return false;
+      if (await pickMonth(el, y, m)) return true;
+      value = ['date', 'month'].includes(el.type) ? dateValue(date, el.type) : `${String(m).padStart(2, '0')}/${y}`;
+    }
+    if (!value) return false;
+    if (el.tagName === 'SELECT') {
+      const opts = [...el.options].map((o) => ({ text: o.text, value: o.value }));
+      const opt = key.endsWith('month')
+        ? opts.find((o) => norm(o.text).startsWith(MONTHS[m - 1].slice(0, 3))) || opts.find((o) => +clean(o.text) === m)
+        : pickOption(opts, value);
+      if (!opt) return false;
+      setValue(el, opt.value);
+      return true;
+    }
+    if (el.matches(COMBO)) {
+      const ans = { key: 'experience', value };
+      const rs = await fillReactSelect(el, ans);
+      return rs === null ? fillCombobox(el, ans) : rs;
+    }
+    if (key.endsWith('month')) value = String(m).padStart(2, '0'); // a typed month box (Workday) takes "05"
+    setValue(el, value);
+    await settle();
+    return true;
+  }
+
+  async function fillJob(slot, job) {
+    // Ticking "I currently work here" first, since it hides the end date
+    if (slot.current && job.current && !slot.current.checked) { slot.current.click(); await settle(); }
+    for (const [key, el] of Object.entries(slot)) {
+      if (key === 'current' || !el.isConnected || !visible(el) || (job.current && key.startsWith('end'))) continue;
+      if (await fillJobField(el, key, job)) mark(el, 'profile', '', 'experience');
+    }
+  }
+
+  /** Adds an entry per saved job (clicking Add, and Save where each job is saved on its own), then fills it. */
+  async function fillExperience(section, fresh) {
+    if (grown.has(section)) return;
+    grown.add(section);
+    const todo = EXPERIENCE.filter((job) => !listed(section, job));
+    const empty = jobSlots(section).filter(blankSlot);
+    for (let clicks = 0; todo.length && clicks <= EXPERIENCE.length;) {
+      let slot = empty.shift();
+      if (!slot) {
+        const add = addButton(section);
+        if (!add) break;
+        const before = jobSlots(section).length;
+        press(add);
+        clicks++;
+        slot = await waitFor(() => { const s = jobSlots(section); return s.length > before ? s[s.length - 1] : null; }, 3000);
+        if (!slot) break;
+      }
+      await fillJob(slot, todo.shift());
+      const save = findButton(section, /^save\b/i);
+      if (save) {
+        press(save);
+        await waitFor(() => !save.isConnected || !visible(save), 3000);
+        await settle();
+      }
+    }
+    // What's left is yours: the rules below would put your current job in every entry
+    for (const slot of jobSlots(section)) {
+      for (const el of Object.values(slot)) {
+        if (!fresh(el) || el.type === 'checkbox' || !visible(el) || filledIn(el)) continue;
+        const q = questionFor(el) || hostHints(el);
+        unfilled(el, q, isRequired(el, q));
+      }
+    }
+  }
+
   // ---------- One pass over the page ----------
 
   /** Returns how many fields it hadn't seen before, so a step that didn't change isn't advanced twice. */
@@ -555,6 +739,9 @@
         mark(input.closest('div') || input, 'profile', '', 'resume');
       }
     }
+
+    // Work history, before the rules below fill every job's title with your current one
+    if (EXPERIENCE.length) for (const section of experienceSections()) await fillExperience(section, fresh);
 
     // Searchable dropdowns (react-select, Ashby, LinkedIn typeaheads)
     for (const el of all(COMBO)) {
@@ -736,7 +923,7 @@
   function nextButton() {
     return all('button, input[type=submit], input[type=button], [role=button]').find((b) => {
       if (!visible(b) || b.disabled || b.getAttribute('aria-disabled') === 'true') return false;
-      const names = [textOf(b), b.value, b.getAttribute('aria-label')].map(clean).filter(Boolean);
+      const names = buttonNames(b);
       return names.some((t) => NEXT.test(t)) && !names.some((t) => NEVER_CLICK.test(t));
     });
   }
@@ -903,7 +1090,7 @@
 
   // ---------- Public API ----------
 
-  async function fill({ profile = {}, answers = [], resume = null, drafts = false, job = null }) {
+  async function fill({ profile = {}, answers = [], resume = null, drafts = false, job = null, experience = [] }) {
     P = { ...profile };
     P.fullName = [P.firstName, P.lastName].filter(Boolean).join(' ');
     P.preferredName = P.preferredName || P.firstName;
@@ -918,8 +1105,10 @@
     RESUME = resume && resume.data ? resume : null;
     DRAFTS = drafts;
     PAGE_JOB = job && job.description ? job : null;
+    EXPERIENCE = (experience || []).filter((j) => j && (j.title || j.company));
     report = { filled: [], saved: [], missing: [], asks: [] };
     seen = new WeakSet();
+    grown = new WeakSet();
     steps = 0;
     const found = await pass();
     const result = { ...report, drafting: report.asks.map((a) => a.q.slice(0, 120)) };

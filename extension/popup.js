@@ -332,8 +332,8 @@ async function initResumePicker() {
 $('resumePick').addEventListener('change', (e) => chrome.storage.local.set({ resumeId: e.target.value }));
 
 $('autofillBtn').addEventListener('click', async () => {
-  const { profile = {}, answers = [], draftsEnabled = true } =
-    await chrome.storage.local.get(['profile', 'answers', 'draftsEnabled']);
+  const { profile = {}, answers = [], draftsEnabled = true, experience = [] } =
+    await chrome.storage.local.get(['profile', 'answers', 'draftsEnabled', 'experience']);
   const resume = await getActiveResume();
   if (!Object.values(profile).some(Boolean)) {
     showAutofillMsg('Add your details under ⚙ Settings → Autofill profile first.', 'err');
@@ -353,7 +353,7 @@ $('autofillBtn').addEventListener('click', async () => {
     });
     const results = await chrome.scripting.executeScript({
       target, func: (data) => window.__applylog && window.__applylog.fill(data),
-      args: [{ profile, answers, resume, drafts: draftsEnabled, job }]
+      args: [{ profile, answers, resume, drafts: draftsEnabled, job, experience }]
     });
     const filled = [], saved = [], missing = [], drafting = [];
     for (const { result } of results) {

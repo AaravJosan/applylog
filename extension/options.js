@@ -65,6 +65,78 @@ profileForm.addEventListener('submit', async (e) => {
 
 loadProfile();
 
+// Work history: one entry per job, filled into forms that ask for each job separately
+const JOB_FIELDS = [['title', 'Title'], ['company', 'Company'], ['location', 'Location'], ['start', 'From'], ['end', 'To']];
+
+async function showJobs() {
+  const { experience = [] } = await chrome.storage.local.get('experience');
+  const save = () => chrome.storage.local.set({ experience });
+  const list = $('jobList');
+  list.textContent = '';
+  experience.forEach((job, i) => {
+    const box = document.createElement('div');
+    box.className = 'job';
+    const head = document.createElement('div');
+    head.className = 'job-head';
+    head.textContent = `Job ${i + 1}`;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.title = 'Remove';
+    del.setAttribute('aria-label', `Remove job ${i + 1}`);
+    del.textContent = '×';
+    del.addEventListener('click', async () => {
+      experience.splice(i, 1);
+      await save();
+      showJobs();
+    });
+    head.append(del);
+    box.append(head);
+    const input = (key, label) => {
+      const l = document.createElement('label');
+      l.textContent = label;
+      const el = document.createElement('input');
+      if (key === 'start' || key === 'end') el.type = 'month';
+      el.value = job[key] || '';
+      el.addEventListener('input', () => { job[key] = el.value.trim(); save(); });
+      l.append(el);
+      return l;
+    };
+    for (let f = 0; f < JOB_FIELDS.length; f += 2) {
+      const row = document.createElement('div');
+      row.className = 'row';
+      for (const [key, label] of JOB_FIELDS.slice(f, f + 2)) row.append(input(key, label));
+      box.append(row);
+    }
+    const end = box.querySelectorAll('input')[4];
+    const current = document.createElement('label');
+    current.className = 'check';
+    const tick = document.createElement('input');
+    tick.type = 'checkbox';
+    tick.checked = !!job.current;
+    end.disabled = tick.checked;
+    tick.addEventListener('change', () => { job.current = tick.checked; end.disabled = tick.checked; save(); });
+    current.append(tick, ' I currently work here');
+    box.append(current);
+    const desc = document.createElement('label');
+    desc.textContent = 'Description';
+    const text = document.createElement('textarea');
+    text.rows = 3;
+    text.value = job.description || '';
+    text.addEventListener('input', () => { job.description = text.value.trim(); save(); });
+    desc.append(text);
+    box.append(desc);
+    list.append(box);
+  });
+}
+
+$('addJob').addEventListener('click', async () => {
+  const { experience = [] } = await chrome.storage.local.get('experience');
+  await chrome.storage.local.set({ experience: [...experience, {}] });
+  showJobs();
+});
+
+showJobs();
+
 // Resumes: stored as base64 so autofill can attach them to upload fields (see resumes.js)
 async function showResumes() {
   const { resumes, resumeId } = await getResumes();
