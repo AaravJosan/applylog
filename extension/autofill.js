@@ -136,9 +136,10 @@
   let DRAFTS = false;
   let PAGE_JOB = null; // job details from the top page, when this form is in an iframe
   let EXPERIENCE = []; // your jobs, most recent first
+  let EDUCATION = []; // your school, from your profile
   let report = null;
   let seen = new WeakSet();
-  let grown = new WeakSet(); // work-history sections we've added entries to
+  let grown = new WeakSet(); // work-history and education sections we've added entries to
   let observer = null;
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -316,6 +317,30 @@
 
   // ---------- Setting values in a way frameworks notice ----------
 
+  /**
+   * Types one character at a time, for masked boxes ("(555) 555-5555", "MM/YYYY") that only commit their
+   * own value as characters arrive. A mask that inserts each character itself cancels beforeinput.
+   */
+  function typeKeys(el, chars) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    el.focus();
+    setter.call(el, '');
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
+    for (const ch of chars) {
+      const before = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: ch });
+      if (!el.dispatchEvent(before)) continue;
+      // Over the selection, like a key would: a mask that shows "MM/YYYY" selects the part to type next
+      const v = el.value;
+      const start = el.selectionStart ?? v.length;
+      const end = el.selectionEnd ?? start;
+      setter.call(el, v.slice(0, start) + ch + v.slice(end));
+      try { el.setSelectionRange(start + 1, start + 1); } catch (_) { /* not every input has a caret */ }
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.blur();
+  }
+
   function setValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
       : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
@@ -333,15 +358,7 @@
         const dial = Object.entries(DIAL_CODES).find(([, country]) => country === P.country);
         if (dial && digits.startsWith(dial[0]) && digits.length > dial[0].length + 6) digits = digits.slice(dial[0].length);
       }
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-      setter.call(el, '');
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward', data: null }));
-      for (const digit of digits) {
-        setter.call(el, el.value + digit);
-        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: digit }));
-      }
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      el.blur();
+      typeKeys(el, digits);
       return;
     }
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, next);
@@ -545,11 +562,14 @@
     }
   }
 
-  // ---------- Work history ----------
+  // ---------- Work history and education ----------
 
-  // Sections that list each job on its own: Workday's "Work Experience", SmartRecruiters' "Experience"
+  // Sections that list each job or school on its own: Workday's "Work Experience", SmartRecruiters' "Experience" and "Education"
   const EXP_HEADING = /^(work |professional |relevant )?(experience|employment|work history|employment history)( \d+)?$|^(work|job|employment) (experience|history)\b/;
-  const OTHER_SECTION = /educat|school|personal|contact|profile|resume|\bcv\b|language|skill|certif|question|website|social|link|address|reference|award|project|volunteer|document|message|voluntary|disclos|self identif/;
+  const EDU_HEADING = /^(education|educational (background|history)|academic (background|history))( \d+)?$/;
+  const ANY_SECTION = 'personal|contact|profile|resume|\\bcv\\b|language|skill|certif|question|website|social|link|address|reference|award|project|volunteer|document|message|voluntary|disclos|self identif';
+  const OTHER_SECTION = new RegExp('educat|school|' + ANY_SECTION);
+  const OTHER_EDU = new RegExp('experience|employment|work history|' + ANY_SECTION);
   const HEADINGS = 'h1, h2, h3, h4, h5, h6, legend, [role=heading]';
   const FIELDS = 'input:not([type=hidden]), select, textarea';
 
@@ -558,19 +578,19 @@
     b.getRootNode().host && b.getRootNode().host.getAttribute('aria-label')].map(clean).filter(Boolean);
   const findButton = (root, re) => all('button, [role=button]', root)
     .find((b) => visible(b) && !b.disabled && buttonNames(b).some((t) => re.test(t)));
-  const addButton = (section) => all('button, [role=button]', section).find((b) => visible(b) && !b.disabled
-    && buttonNames(b).some((t) => /^\+?\s*add\b/i.test(t)) && !buttonNames(b).some((t) => OTHER_SECTION.test(norm(t))));
+  const addButton = (section, kind) => all('button, [role=button]', section).find((b) => visible(b) && !b.disabled
+    && buttonNames(b).some((t) => /^\+?\s*add\b/i.test(t)) && !buttonNames(b).some((t) => kind.other.test(norm(t))));
 
-  function experienceSections() {
+  function entrySections(kind) {
     const found = [];
     for (const h of all(HEADINGS)) {
-      if (!EXP_HEADING.test(norm(textOf(h)))) continue;
+      if (!kind.heading.test(norm(textOf(h)))) continue;
       // The widest box that's still only this section: SmartRecruiters opens a new entry below the heading's row
       let section = null;
       for (let node = up(h), i = 0; node && i < 6; node = up(node), i++) {
-        if (all(HEADINGS, node).some((x) => OTHER_SECTION.test(norm(textOf(x))))) break;
+        if (all(HEADINGS, node).some((x) => kind.other.test(norm(textOf(x))))) break;
         if (all('input[type=file], input[type=email]', node).length) break;
-        if (section || all(FIELDS, node).some(visible) || addButton(node)) section = node;
+        if (section || all(FIELDS, node).some(visible) || addButton(node, kind)) section = node;
       }
       if (section) found.push(section);
     }
@@ -594,16 +614,31 @@
     return /location|city/.test(own) ? 'location' : null;
   }
 
+  /** What a field in an education section asks for ("school", "degree", "endyear"…), or null. */
+  function eduField(el) {
+    const key = jobField(el);
+    if (key && !['title', 'company'].includes(key)) return key; // dates, "I currently attend", location, description
+    const own = norm([questionFor(el), el.name, el.id, el.getAttribute('data-automation-id'), el.placeholder, hostHints(el)].join(' '));
+    if (/school|universit|college|institution/.test(own)) return 'school';
+    if (/\bdegree\b/.test(own)) return 'degree';
+    return /\bmajor\b|discipline|field of study|area of study|concentration/.test(own) ? 'major' : null;
+  }
+
+  const KINDS = {
+    experience: { heading: EXP_HEADING, other: OTHER_SECTION, field: jobField, names: ['title', 'company'], entries: () => EXPERIENCE },
+    education: { heading: EDU_HEADING, other: OTHER_EDU, field: eduField, names: ['school'], entries: () => EDUCATION }
+  };
+
   /**
    * The section's fields by job: the nth title, nth company and nth start date belong together.
    * Hidden ones count too, so a job whose end date "I currently work here" hid doesn't shift the next job's onto it.
    */
-  function jobSlots(section) {
+  function jobSlots(section, kind) {
     const slots = [];
     const counts = {};
     for (const el of all(FIELDS, section)) {
       if (el.disabled || el.closest('.flatpickr-calendar')) continue; // a month picker's own year box
-      const key = jobField(el);
+      const key = kind.field(el);
       if (!key) continue;
       const i = counts[key] = (counts[key] || 0) + 1;
       (slots[i - 1] = slots[i - 1] || {})[key] = el;
@@ -612,11 +647,11 @@
   }
 
   const filledIn = (el) => (el.tagName === 'SELECT' ? el.selectedIndex > 0 && !!el.value : !!el.value.trim());
-  const blankSlot = (slot) => ['title', 'company'].every((k) => !slot[k] || !filledIn(slot[k]));
+  const blankSlot = (slot, kind) => kind.names.every((k) => !slot[k] || !filledIn(slot[k]));
   // Already on the form, typed by you or read from your resume
-  const listed = (section, job) => {
+  const listed = (section, job, kind) => {
     const text = norm(section.textContent + ' ' + all(FIELDS, section).map((el) => el.value || '').join(' '));
-    return [job.title, job.company].filter(Boolean).every((v) => text.includes(norm(v)));
+    return kind.names.map((k) => job[k]).filter(Boolean).every((v) => text.includes(norm(v)));
   };
 
   /** Month pickers that ignore typed text (flatpickr, on SmartRecruiters): step to the year, then click the month. */
@@ -647,13 +682,19 @@
     const date = key.startsWith('start') ? job.start : key.startsWith('end') ? job.end : '';
     const [y, m] = (date || '').split('-').map(Number);
     const monthName = m ? MONTHS[m - 1][0].toUpperCase() + MONTHS[m - 1].slice(1) : '';
-    let value = { title: job.title, company: job.company, location: job.location, description: job.description }[key];
+    let value = job[key]; // title, company, school, degree…
     if (key.endsWith('month')) value = monthName;
     if (key.endsWith('year')) value = y ? String(y) : '';
     if (key.endsWith('full')) {
       if (!y || !m) return false;
       if (await pickMonth(el, y, m)) return true;
-      value = ['date', 'month'].includes(el.type) ? dateValue(date, el.type) : `${String(m).padStart(2, '0')}/${y}`;
+      if (['date', 'month'].includes(el.type)) value = dateValue(date, el.type);
+      else if (/\bmm\b.*\byy/.test(norm([el.placeholder, el.value, hostHints(el)].join(' ')))) {
+        // An "MM/YYYY" mask drops the month when the whole date arrives at once, so type it
+        typeKeys(el, String(m).padStart(2, '0') + y);
+        await settle();
+        return true;
+      } else value = `${String(m).padStart(2, '0')}/${y}`;
     }
     if (!value) return false;
     if (el.tagName === 'SELECT') {
@@ -681,25 +722,32 @@
     if (slot.current && job.current && !slot.current.checked) { slot.current.click(); await settle(); }
     for (const [key, el] of Object.entries(slot)) {
       if (key === 'current' || !el.isConnected || !visible(el) || (job.current && key.startsWith('end'))) continue;
-      if (await fillJobField(el, key, job)) mark(el, 'profile', '', 'experience');
+      if (await fillJobField(el, key, job)) mark(el, 'profile', '', job.school ? 'education' : 'experience');
+    }
+    // Graduating later than the form's "To" allows: you're still there
+    const end = Object.keys(slot).find((k) => k.startsWith('end') && slot[k].isConnected && visible(slot[k]));
+    if (job.school && slot.current && !slot.current.checked && end && !filledIn(slot[end]) && job.end > new Date().toISOString().slice(0, 7)) {
+      slot.current.click();
+      await settle();
     }
   }
 
-  /** Adds an entry per saved job (clicking Add, and Save where each job is saved on its own), then fills it. */
-  async function fillExperience(section, fresh) {
+  /** Adds an entry per saved job or school (clicking Add, and Save where each is saved on its own), then fills it. */
+  async function fillEntries(section, kind, fresh) {
     if (grown.has(section)) return;
     grown.add(section);
-    const todo = EXPERIENCE.filter((job) => !listed(section, job));
-    const empty = jobSlots(section).filter(blankSlot);
-    for (let clicks = 0; todo.length && clicks <= EXPERIENCE.length;) {
+    const entries = kind.entries();
+    const todo = entries.filter((job) => !listed(section, job, kind));
+    const empty = jobSlots(section, kind).filter((s) => blankSlot(s, kind));
+    for (let clicks = 0; todo.length && clicks <= entries.length;) {
       let slot = empty.shift();
       if (!slot) {
-        const add = addButton(section);
+        const add = addButton(section, kind);
         if (!add) break;
-        const before = jobSlots(section).length;
+        const before = jobSlots(section, kind).length;
         press(add);
         clicks++;
-        slot = await waitFor(() => { const s = jobSlots(section); return s.length > before ? s[s.length - 1] : null; }, 3000);
+        slot = await waitFor(() => { const s = jobSlots(section, kind); return s.length > before ? s[s.length - 1] : null; }, 3000);
         if (!slot) break;
       }
       await fillJob(slot, todo.shift());
@@ -711,7 +759,7 @@
       }
     }
     // What's left is yours: the rules below would put your current job in every entry
-    for (const slot of jobSlots(section)) {
+    for (const slot of jobSlots(section, kind)) {
       for (const el of Object.values(slot)) {
         if (!fresh(el) || el.type === 'checkbox' || !visible(el) || filledIn(el)) continue;
         const q = questionFor(el) || hostHints(el);
@@ -740,8 +788,10 @@
       }
     }
 
-    // Work history, before the rules below fill every job's title with your current one
-    if (EXPERIENCE.length) for (const section of experienceSections()) await fillExperience(section, fresh);
+    // Work history and education, before the rules below fill every job's title with your current one
+    for (const kind of Object.values(KINDS)) {
+      if (kind.entries().length) for (const section of entrySections(kind)) await fillEntries(section, kind, fresh);
+    }
 
     // Searchable dropdowns (react-select, Ashby, LinkedIn typeaheads)
     for (const el of all(COMBO)) {
@@ -1106,6 +1156,9 @@
     DRAFTS = drafts;
     PAGE_JOB = job && job.description ? job : null;
     EXPERIENCE = (experience || []).filter((j) => j && (j.title || j.company));
+    // Forms ask for the highest degree only, so your profile's school is the one entry
+    EDUCATION = P.school ? [{ school: P.school, degree: P.degree, major: P.major,
+      end: P.gradYear && gm >= 0 ? `${P.gradYear}-${String(gm + 1).padStart(2, '0')}` : P.gradYear }] : [];
     report = { filled: [], saved: [], missing: [], asks: [] };
     seen = new WeakSet();
     grown = new WeakSet();
