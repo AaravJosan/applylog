@@ -298,6 +298,27 @@
     return (v.length > 3 && one(options.filter((o) => lab(o).includes(v)))) || null;
   }
 
+  // "Computer Science and Engineering" → "Computer Science", "Engineering"
+  const majorParts = (value) => clean(value).split(/\s+and\s+|\s*[&/,+]\s*/i).filter(Boolean);
+  const majorWords = (text) => (norm(text).match(/[a-z0-9]+/g) || []).filter((w) => !['and', 'of', 'in', 'the', 'with'].includes(w));
+
+  /** Lists often name a major more broadly than you do, so an option may also sit inside your answer. Ties go to you. */
+  function pickMajor(options, value) {
+    const direct = pickOption(options, value);
+    if (direct) return direct;
+    const mine = new Set(majorWords(value));
+    const inside = options.map((o) => ({ o, words: majorWords(o.text) })).filter(({ words }) => words.length && words.every((w) => mine.has(w)));
+    const most = Math.max(0, ...inside.map(({ words }) => words.length));
+    const best = inside.filter(({ words }) => words.length === most);
+    if (best.length) return best.length === 1 ? best[0].o : null;
+    // "Computer Science, General" for "Computer Science and Engineering"
+    const main = majorWords(majorParts(value)[0]);
+    const starts = main.length ? options.filter((o) => { const w = majorWords(o.text); return main.every((m, i) => w[i] === m); }) : [];
+    return starts.length === 1 ? starts[0] : null;
+  }
+
+  const pickFor = (options, ans) => (ans.key === 'major' ? pickMajor(options, ans.value) : pickOption(options, ans.value));
+
   function pickLocation(options) {
     const city = norm(P.city);
     const state = norm(P.state);
@@ -417,15 +438,45 @@
   // Dropdowns you can type into. Not all say role=combobox; some only announce their suggestion list.
   const COMBO = 'input[role=combobox], input[aria-autocomplete=list], input[aria-autocomplete=both], input[aria-haspopup=listbox]';
 
+  // Answers that must be one of the form's own options: your wording in the box only looks filled in
+  const PICK_ONLY = new Set(['degree', 'major']);
+  const DROPDOWN_HINT = /drop-?down|combo-?box|auto-?(complete|suggest)|type-?ahead|select(?!ed|ion|-none|-all|-text|-auto)/i;
+
+  /** Custom dropdowns can pass for text boxes. Some say so in their attributes or class names, others only once clicked. */
+  async function isDropdown(el) {
+    if (el.matches(COMBO) || el.hasAttribute('aria-expanded') || el.hasAttribute('aria-controls') || el.hasAttribute('aria-owns')
+      || !['', null, 'false'].includes(el.getAttribute('aria-haspopup'))) return true;
+    for (let n = el, depth = 0; n && depth < 4; n = up(n), depth++) {
+      const hints = [n.localName, n.getAttribute('class'), n.getAttribute('role'), n.getAttribute('data-testid'), n.getAttribute('data-automation-id')];
+      if (DROPDOWN_HINT.test(hints.join(' '))) return true;
+    }
+    const open = openOptions();
+    el.focus();
+    press(el);
+    const opened = await waitFor(() => visibleOptions(el, open).length > 0, 500);
+    if (opened) {
+      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+      await sleep(120);
+    }
+    el.blur();
+    return opened;
+  }
+
+  // What each typed dropdown listed while we looked for your answer, so Claude can choose from it instead
+  const offered = new WeakMap();
+  const NO_RESULTS = /^(no (results|options|matches)|nothing found|loading)/i;
+  const offeredOptions = (el) => [...new Set(offered.get(el) || [])].filter((t) => t && !PLACEHOLDER_TEXT.test(t) && !NO_RESULTS.test(t));
+
   // What to type into a search-as-you-type dropdown, best first. Your own wording ("B.S.") filters a list
   // that says "Bachelor's Degree" down to nothing, so degrees also search by their level.
   const DEGREE_WORDS = { bachelor: ['Bachelor'], master: ['Master'], doctorate: ['Doctor', 'PhD'], associate: ['Associate'] };
   function searchTerms(ans) {
     if (LOCATION_KEYS.has(ans.key)) return [P.city || ans.value];
+    if (ans.key === 'major') return [...new Set([ans.value, ...majorParts(ans.value)])];
     const level = degreeLevel(norm(ans.value));
     return [...new Set([ans.value, ...(level ? DEGREE_WORDS[level] : [])])];
   }
-  const choose = (opts, ans) => (LOCATION_KEYS.has(ans.key) ? pickLocation(opts) : pickOption(opts, ans.value));
+  const choose = (opts, ans) => (LOCATION_KEYS.has(ans.key) ? pickLocation(opts) : pickFor(opts, ans));
 
   async function fillReactSelect(el, ans) {
     const state = bridge(el, { op: 'read' });
@@ -441,22 +492,31 @@
         choice = s && choose(asOptions(s), ans);
         if (choice) break;
       }
+      if (!choice) bridge(el, { op: 'search', text: '' }); // or the failed search stays in the box, looking like an answer
     }
     if (!choice) return false;
     bridge(el, { op: 'select', index: choice.i });
     return true;
   }
 
-  function visibleOptions(el) {
+  // Options already showing before a box was opened belong to some other field's list that never closed
+  const openOptions = () => new Set(all('[role=option]').filter(visible));
+
+  function visibleOptions(el, ignore = new Set()) {
     const id = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
     const list = id && byId(el, id);
-    const opts = all('[role=option]', list || document).filter(visible);
+    const opts = all('[role=option]', list || document).filter((o) => visible(o) && !ignore.has(o));
     return opts.map((o) => ({ el: o, text: textOf(o), value: o.getAttribute('data-value') || '' }));
   }
 
   async function fillCombobox(el, ans) {
     if (el.value.trim()) return true;
-    const options = (ms) => waitFor(() => { const o = visibleOptions(el); return o.length ? o : null; }, ms);
+    const stale = openOptions();
+    const options = async (ms) => {
+      const found = await waitFor(() => { const o = visibleOptions(el, stale); return o.length ? o : null; }, ms);
+      if (found) offered.set(el, [...(offered.get(el) || []), ...found.map((o) => o.text)]);
+      return found;
+    };
     // Open the list and choose from everything it offers; only type a search when that finds nothing
     el.focus();
     press(el);
@@ -465,22 +525,29 @@
     let choice = opts && choose(opts, ans);
     for (const text of choice ? [] : searchTerms(ans)) {
       setValue(el, text);
+      el.focus(); // setValue blurs, and many lists close when their box loses focus
       opts = await options(3000);
       choice = opts && choose(opts, ans);
       if (choice) break;
     }
     if (choice) { press(choice.el); return true; }
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    const close = () => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    close();
     // A real combobox only takes its own options; a box that merely suggests takes your words
-    if (el.getAttribute('role') !== 'combobox') { setValue(el, ans.value); return true; }
+    if (el.getAttribute('role') !== 'combobox' && !PICK_ONLY.has(ans.key)) { setValue(el, ans.value); return true; }
     setValue(el, '');
+    close(); // clearing the box can reopen its list
     return false;
   }
+
+  /** Lets Claude choose among what a typed dropdown listed, picking its answer the same way yours would be. */
+  const askCombo = (el, q, options, required) => askChoice(el, q, options,
+    (i) => fillCombobox(el, { key: 'saved', value: options[i] }), () => !el.value.trim(), { required });
 
   async function fillListboxButton(btn, ans) {
     press(btn);
     const opts = await waitFor(() => { const o = visibleOptions(btn); return o.length ? o : null; }, 2000);
-    const choice = opts && pickOption(opts, ans.value);
+    const choice = opts && pickFor(opts, ans);
     if (choice) { press(choice.el); await sleep(150); return true; }
     btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     return false;
@@ -701,13 +768,13 @@
       const opts = [...el.options].map((o) => ({ text: o.text, value: o.value }));
       const opt = key.endsWith('month')
         ? opts.find((o) => norm(o.text).startsWith(MONTHS[m - 1].slice(0, 3))) || opts.find((o) => +clean(o.text) === m)
-        : pickOption(opts, value);
+        : pickFor(opts, { key, value });
       if (!opt) return false;
       setValue(el, opt.value);
       return true;
     }
-    if (el.matches(COMBO)) {
-      const ans = { key: 'experience', value };
+    if (el.matches(COMBO) || (PICK_ONLY.has(key) && await isDropdown(el))) {
+      const ans = { key: PICK_ONLY.has(key) ? key : 'experience', value };
       const rs = await fillReactSelect(el, ans);
       return rs === null ? fillCombobox(el, ans) : rs;
     }
@@ -809,6 +876,8 @@
         if (st && st.options.length && canAsk(q)) {
           askChoice(el, q, st.options, (i) => bridge(el, { op: 'select', index: i }),
             () => !(bridge(el, { op: 'read' }) || { value: [] }).value.length, { multi: st.multi, required: isRequired(el, q) });
+        } else if (!st && ans && PICK_ONLY.has(ans.key) && offeredOptions(el).length && canAsk(q)) {
+          askCombo(el, q, offeredOptions(el), isRequired(el, q));
         } else unfilled(el, q, isRequired(el, q));
       }
       await sleep(60);
@@ -833,9 +902,11 @@
     const SKIP = ['hidden', 'file', 'submit', 'button', 'reset', 'image', 'password', 'checkbox', 'radio', 'search'];
     for (const el of all('input, textarea, select')) {
       if (el.matches(COMBO) || SKIP.includes((el.type || '').toLowerCase())) continue;
-      if (!fresh(el) || el.disabled || el.readOnly || !visible(el)) continue;
+      if (!fresh(el) || el.disabled || !visible(el)) continue;
       if (el.getAttribute('aria-hidden') === 'true') continue; // dropdowns' hidden "required" inputs
       const q = questionFor(el);
+      // Read-only boxes are skipped, except a degree or major dropdown that opens when clicked
+      if (el.readOnly && !(PICK_ONLY.has(ruleFor(norm(q))) && await isDropdown(el))) continue;
       if (el instanceof HTMLInputElement && el.type === 'tel') await fillPhoneCountry(el);
       const isSelect = el.tagName === 'SELECT';
       const empty = isSelect ? (!el.value || el.selectedIndex <= 0) : !el.value.trim();
@@ -844,18 +915,28 @@
       const type = (el.getAttribute('type') || '').toLowerCase();
       const isDate = ['date', 'month'].includes(type);
       let ok = false;
+      // A degree or major box that must take one of its options: what Claude may choose from, never free text
+      const hasList = !!(el.list && el.list.options.length);
+      const pickOnly = !isSelect && !isDate && el.tagName === 'INPUT' && PICK_ONLY.has(ans ? ans.key : ruleFor(norm(q)));
+      const custom = pickOnly && !hasList && await isDropdown(el);
+      let choices = null;
       if (ans) {
         if (isSelect) {
-          const opt = pickOption([...el.options].map((o) => ({ text: o.text, value: o.value, o })), ans.value);
+          const opt = pickFor([...el.options].map((o) => ({ text: o.text, value: o.value, o })), ans);
           if (opt) { setValue(el, opt.value); ok = true; }
         } else if (isDate) {
           const d = dateValue(ans.value, type);
           if (d) { setValue(el, d); ok = el.value === d; }
-        } else if (el.list && el.list.options.length) {
+        } else if (hasList) {
           // A text box with a suggestion list: the suggestion that means your answer, else your own words
-          const opt = pickOption([...el.list.options].map((o) => ({ text: o.label || o.value, value: o.value })), ans.value);
-          setValue(el, opt ? opt.value : ans.value);
-          ok = true;
+          const listed = [...el.list.options].map((o) => ({ text: o.label || o.value, value: o.value }));
+          const opt = pickFor(listed, ans);
+          if (opt || !pickOnly) {
+            setValue(el, opt ? opt.value : ans.value);
+            ok = true;
+          } else choices = { options: listed.map((o) => o.text), apply: (i) => setValue(el, listed[i].value) };
+        } else if (custom) {
+          ok = await fillCombobox(el, ans);
         } else if (!(el.tagName === 'TEXTAREA' && ans.source === 'profile' && ans.key !== 'address')) {
           setValue(el, ans.value);
           ok = true;
@@ -864,7 +945,13 @@
       const real = isSelect ? [...el.options].filter((o) => o.value && !PLACEHOLDER_TEXT.test(o.text.trim())) : [];
       const required = isRequired(el, q);
       if (ok) { mark(el, ans.source, q, ans.key); await settle(); }
-      else if (!isSelect && isOpenEnded(el, q) && canAsk(q)) askText(el, q);
+      else if (choices) {
+        if (canAsk(q)) askChoice(el, q, choices.options, choices.apply, () => !el.value.trim(), { required });
+        else unfilled(el, q, required);
+      } else if (custom) {
+        if (offeredOptions(el).length && canAsk(q)) askCombo(el, q, offeredOptions(el), required);
+        else unfilled(el, q, required);
+      } else if (!isSelect && isOpenEnded(el, q) && canAsk(q)) askText(el, q);
       else if (isSelect && real.length && canAsk(q)) {
         askChoice(el, q, real.map((o) => clean(o.text)), (i) => setValue(el, real[i].value), () => el.selectedIndex <= 0 || !el.value, { required });
       } else if (!isSelect && el.tagName === 'INPUT' && canAsk(q) && !['email', 'tel', 'password'].includes(type)) {
