@@ -20,7 +20,7 @@
   },
   "options_page": "options.html",
   "background": { "service_worker": "background.js" },
-  "permissions": ["activeTab", "scripting", "storage", "nativeMessaging"],
+  "permissions": ["activeTab", "scripting", "storage", "unlimitedStorage", "nativeMessaging"],
   "host_permissions": [
     "https://script.google.com/*",
     "https://script.googleusercontent.com/*",

@@ -16,6 +16,16 @@
     return f && f.memoizedProps;
   };
   const label = (o) => (typeof o.label === 'string' ? o.label : String(o.value ?? ''));
+  // Lists that load from the server as you type (Greenhouse's schools, degrees and disciplines) only
+  // search on real keystrokes, so ask their loader directly and keep what it found for 'read' and 'select'
+  const loaderProps = (el) => {
+    const key = Object.keys(el).find((k) => k.startsWith('__reactFiber'));
+    for (let f = key && el[key]; f; f = f.return) if (f.memoizedProps && typeof f.memoizedProps.loadOptions === 'function') return f.memoizedProps;
+    return null;
+  };
+  const loaded = new WeakMap();
+  const searching = new WeakMap();
+  const flat = (opts) => (opts || []).flatMap((o) => o.options || [o]);
 
   document.addEventListener('applylog:rs', (e) => {
     const el = e.target;
@@ -24,11 +34,22 @@
       const req = JSON.parse(el.getAttribute('data-applylog-req') || '{}');
       const p = selectProps(el);
       if (p) {
-        const opts = (p.options || []).flatMap((o) => o.options || [o]);
+        const own = flat(p.options);
+        const opts = own.length ? own : loaded.get(el) || [];
         if (req.op === 'read') {
           res = { options: opts.map(label), value: (p.getValue ? p.getValue() : []).map(label), multi: !!(p.isMulti || (p.selectProps && p.selectProps.isMulti)) };
         } else if (req.op === 'search') {
-          p.selectProps.onInputChange(req.text, { action: 'input-change', prevInputValue: '' });
+          const loader = !own.length && loaderProps(el);
+          if (loader) {
+            loaded.delete(el);
+            const search = {}; // a slower earlier search mustn't land over this one
+            searching.set(el, search);
+            if (req.text) {
+              const keep = (opts) => { if (searching.get(el) === search) loaded.set(el, opts); };
+              Promise.resolve(loader.loadOptions(req.text, [], loader.additional))
+                .then((r) => keep(flat(r && r.options)), () => keep([]));
+            }
+          } else p.selectProps.onInputChange(req.text, { action: 'input-change', prevInputValue: '' });
           res = { ok: true };
         } else if (req.op === 'select' && opts[req.index]) {
           p.selectOption(opts[req.index]);

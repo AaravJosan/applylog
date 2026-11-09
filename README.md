@@ -8,20 +8,32 @@ A Chrome extension that saves job postings to a Google Sheet in one click, and t
 - **Works on major job sites**: LinkedIn, Indeed, Handshake, Greenhouse, Lever, Ashby, Workday, plus any site that publishes standard `JobPosting` structured data.
 - **Networking columns**: track whether you're connected with someone at the company, who your contact is, and your referral status.
 - **Find connections fast**: one button opens a LinkedIn search for your 1st-degree connections at that company.
+- **Outreach tracker**: log the people you reach out to at each company (name, LinkedIn profile, role, status) in an Outreach tab, with follow-up dates set for you and due ones highlighted.
 - **No duplicates**: revisit a job you've already saved and the extension loads its row, so you can update status or referral instead of adding a new one.
 - **Ready-made sheet**: headers, frozen top row and dropdown menus are set up automatically.
 - **Autofill applications**: fill a whole application in one click: contact details, links, resume upload, education, work authorization, common screening questions and voluntary self-identification. Tested on Greenhouse, Lever and Ashby. Also built for Workday, LinkedIn Easy Apply, Handshake and plain HTML forms.
-- **Claude answers the rest**: every question your profile doesn't settle goes to Claude in one batch, with your resume, profile and the job description, using your own Claude subscription. That covers written answers ("Why do you want to work here?", required cover letters), dropdowns, radio buttons, Yes/No buttons, select-all-that-apply checkboxes and multi-selects ("Will you graduate by June 2027?", "Preferred office?", "Which languages?"), and short fields like GPA, graduation date or a portfolio link. Its answers are highlighted purple for you to review. Work authorization, sponsorship, demographic and salary questions are answered only from what you set in your profile (Claude may match your answer to the form's wording, but never guesses one), and consent checkboxes are always left for you.
+- **A resume per kind of role**: save several resumes (Software, Hardware…) and pick which one an application gets. Autofill uploads it and Claude drafts from it.
+- **Claude answers the rest**: every question your profile doesn't settle goes to Claude in one batch, with your resume, profile and the job description, using your own Claude subscription. That covers written answers ("Why do you want to work here?", cover letters), dropdowns, radio buttons, Yes/No buttons, select-all-that-apply checkboxes and multi-selects ("Will you graduate by June 2027?", "Preferred office?", "Which languages?"), and short fields like GPA, graduation date or a portfolio link. Its answers are highlighted purple for you to review. Work authorization, sponsorship, demographic and salary questions are answered only from what you set in your profile (Claude may match your answer to the form's wording, but never guesses one), and consent checkboxes are always left for you.
 - **Learns your answers**: answer a company's custom question once, click **Remember my answers on this page**, and it's reused when a similar question comes up.
 
 ## Sheet columns
 
-| Date added | Job title | Company | Location | URL | Status | Connected on LinkedIn | Contact | Referral | Notes | Last updated |
+| Date added | Job title | Company | Location | URL | Status | Connected on LinkedIn | Contact | Referral | Notes | Last updated | Next action | Action due |
 |---|---|---|---|---|---|---|---|---|---|---|
 
 - **Status**: Saved, Applied, Interviewing, Offer, Rejected, Withdrawn
 - **Connected on LinkedIn**: No, Request sent, Yes
 - **Referral**: Not asked, Asked, Received, Declined
+
+**Connected on LinkedIn**, **Contact** and **Referral** are shared across a company: change one on any row (in the sheet or the extension) and every other row at that company updates too. A new job at a company you've already tracked starts with those values filled in. Company names are matched loosely, so "Amazon" and "Amazon (Annapurna Labs)" count as the same company.
+
+An **Outreach** tab tracks the people you contact:
+
+| Date added | Name | Company | Role | LinkedIn URL | Job URL | Status | Last contact | Follow up on | Notes | Last updated |
+|---|---|---|---|---|---|---|---|---|---|---|
+
+- **Status**: To contact, Request sent, Connected, Messaged, Replied, Referral asked, Referral received, No response
+- **Follow up on** is set when the status changes: 7 days after **Request sent**, 5 days after **Messaged** or **Referral asked**, and today when they've **Connected** (time to send your first message). Other statuses clear it. Rows turn yellow once the date arrives.
 
 ## Setup (about 5 minutes)
 
@@ -73,23 +85,38 @@ This setup is for your own use on your own Mac. Anthropic doesn't allow apps you
 1. Open any job posting.
 2. Click the ApplyLog icon. Details are pre-filled; fix anything that looks off.
 3. Set your status, LinkedIn connection and referral, and add notes.
-4. Click **Add to sheet**.
+4. Add a next action and due date when you have a follow-up or other task.
+5. Click **Add to sheet**.
+
+The **Needs attention** panel shows application actions due today or earlier, applications with no update in the last seven days, and overdue outreach follow-ups. Rejected and withdrawn applications are excluded.
 
 ### Autofilling an application
 
-1. In ⚙ settings, fill in **Autofill profile**: your details, resume, common questions and (optionally) self-identification answers. Click **Save profile**. Everything stays in this browser and is never sent to your sheet.
-2. On an application form, open ApplyLog and click **Autofill this application**.
+1. In ⚙ settings, fill in **Autofill profile**: your details, resumes, common questions and (optionally) self-identification answers. Click **Save profile**. Everything stays in this browser and is never sent to your sheet.
+   - Under **Resumes**, type a name (like *Software* or *Hardware*), then choose the file. Add as many as you like.
+2. On an application form, open ApplyLog. If you've saved more than one resume, pick one under **Resume for this application** (it stays selected until you change it). Then click **Autofill this application**.
 3. Check the highlighted fields:
    - **Green**: filled from your profile.
    - **Blue**: filled from a saved answer to a similar question. Double-check these.
    - **Purple**: answered by Claude, either a written draft or a choice picked from your profile and resume (dashed while it's still working). Read it and make it yours.
-   - **Amber**: required and still empty. Claude leaves a question amber when your profile and resume don't settle it (it won't invent a username or ID). Work authorization, sponsorship, self-identification and salary questions stay amber until you set them in your profile, and consent checkboxes are always yours to tick. Fill in your whole profile once and most applications need nothing from you but a review.
+   - **Red**: couldn't be filled, so it's yours to answer. Only required ones are listed in the popup. Claude leaves a question red when your profile and resume don't settle it (it won't invent a username or ID). Work authorization, sponsorship, self-identification and salary questions stay red until you set them in your profile, and consent checkboxes are always yours to tick. Fill in your whole profile once and most applications need nothing from you but a review.
 4. Answer the rest yourself, then click **Remember my answers on this page** so next time they fill too. You can edit saved answers in settings.
-5. Submit the application yourself. ApplyLog never submits.
+5. Submit the application yourself. ApplyLog never submits. Then click **Save what I submitted**: it keeps a copy of your answers and resume in this browser (the last 20 applications) and sets the job's row in your sheet to **Applied**, unless it's already further along.
 
 On multi-page forms that change pages without reloading (Workday, LinkedIn Easy Apply, Ashby), it keeps filling each new page as you click **Next**, including Claude's answers, for 30 minutes after you start. If a site loads a whole new page for each step, click **Autofill this application** again on each one.
 
-Written answers are drafted only when the drafting helper is set up (step 4) and **Draft written answers with Claude** is on in settings; otherwise those fields are flagged amber. Drafts never replace anything you've typed. Cover letters are drafted only when the form requires one; for an "Attach" or "Enter manually" cover letter, ApplyLog opens the text box first. The phone number's country code picker is filled from your profile's country (USA, US and UK work too), or from your phone number's +code if country is blank. Not filled automatically: consent and legal-acknowledgement checkboxes, and pages that need you to sign in first. Forms embedded from Greenhouse, Lever, Ashby or Workday inside a company's careers site (like Pinterest's) are filled in place. For an iframe from any other site, open that iframe in its own tab.
+Written answers are drafted only when the drafting helper is set up (step 4) and **Draft written answers with Claude** is on in settings; otherwise those fields are flagged red. Drafts never replace anything you've typed. Cover letters are drafted whether or not the form requires one. When an upload offers "Enter manually" (most Greenhouse cover letters), ApplyLog clicks it and has Claude write into the text box; it never does this for your resume. The phone number's country code picker is filled from your profile's country (USA, US and UK work too), or from your phone number's +code if country is blank. Not filled automatically: consent and legal-acknowledgement checkboxes, and pages that need you to sign in first. Forms embedded from Greenhouse, Lever, Ashby or Workday inside a company's careers site (like Pinterest's) are filled in place. For an iframe from any other site, open that iframe in its own tab.
+
+### Tracking outreach
+
+The **Outreach** section at the bottom of the popup lists everyone you've logged at the current company. Change someone's status from the dropdown and the sheet updates, along with their follow-up date. A yellow line at the top shows follow-ups due across all companies.
+
+1. Save the job, then click **Find my LinkedIn connections at this company**.
+2. Open a person's LinkedIn profile and click the ApplyLog icon. **Add a person** is pre-filled with their name, headline and profile link, and the company is the last job you saved. It reads only the profile you have open.
+3. Send the connection request or message on LinkedIn yourself, then click **Add to outreach** (status defaults to **Request sent** on a profile).
+4. When they accept, set them to **Connected**. After you message them, set **Messaged**, and so on.
+
+You can also add people by hand from any page, for example someone you met at a career fair.
 
 Come back to the same posting later and the extension shows your saved tracking info, ready to update.
 
@@ -101,6 +128,7 @@ extension/
   popup.html/css/js  The popup form and job-detail scraping
   autofill.js        Fills application forms (runs in the extension's isolated world)
   bridge.js          Small page-side helper for React dropdowns
+  resumes.js         Saved resumes and which one is selected
   options.html/js    Settings page
   background.js      Passes draft requests to the native helper
   icons/
@@ -116,6 +144,7 @@ apps-script/
 - Job sites change their page layouts often. If a field stops auto-filling on a site, the selectors live in `extractJob()` in `popup.js`.
 - Application autofill matches each question to a profile field using the `RULES` list in `autofill.js`, then falls back to your saved answers. Add a pattern there if a common question isn't recognised.
 - Which questions count as open-ended is set by `OPEN_ENDED` and `isOpenEnded()` in `autofill.js`. The drafting instructions are `SYSTEM` in `native/host.js`. Set `APPLYLOG_MODEL` in the launcher it writes to pick a model (for example `sonnet`). By default it uses your Claude Code default.
+- Updating from an older ApplyLog: paste the new `Code.gs`, run `setup` once to add the new application columns and create/update the Outreach tab, then publish a new version.
 - After editing `Code.gs`, publish a new version: **Deploy → Manage deployments → Edit → Version: New version**.
 
 ## Tech
