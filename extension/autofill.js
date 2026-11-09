@@ -366,6 +366,9 @@
   function pickCountry(options) {
     if (!P.country) return null;
     const mine = options.filter((o) => countriesIn(o.text, true).has(P.country));
+    // Or a list for everywhere else: "All Locations (English)", "Rest of world"
+    const anywhere = options.filter((o) => /\ball (locations|countries|regions)\b|rest of (the )?world|worldwide/i.test(o.text));
+    if (!mine.length && anywhere.length === 1) return anywhere[0];
     if (mine.length <= 1) return mine[0] || null;
     // "United States" over "United States Minor Outlying Islands"
     const exact = mine.filter((o) => optionText(o.text) === optionText(P.country));
