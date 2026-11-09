@@ -300,10 +300,13 @@
     return null;
   }
 
+  // "University of California, Berkeley" is the same option as "University of California - Berkeley"
+  const optionText = (s) => clean(norm(s).replace(/,/g, ' '));
+
   function pickOption(options, value) {
-    const v = norm(value);
+    const v = optionText(value);
     const syn = SYNONYMS[v];
-    const lab = (o) => norm(o.text);
+    const lab = (o) => optionText(o.text);
     const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Several partial matches ("University of Washington - Bothell / Seattle / Tacoma"):
     // take the one naming your city, otherwise leave it for you rather than guess
@@ -315,7 +318,7 @@
       const local = city ? list.filter((o) => lab(o).includes(city)) : [];
       return local.length === 1 ? local[0] : undefined;
     };
-    const exact = options.find((o) => lab(o) === v || norm(o.value) === v);
+    const exact = options.find((o) => lab(o) === v || optionText(o.value) === v);
     if (exact) return exact;
     // "BS", "B.S. Computer Science", "Bachelors" and "Bachelor of Science" are the same degree, either way round
     const level = degreeLevel(v);
