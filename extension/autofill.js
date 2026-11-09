@@ -25,7 +25,7 @@
     // Sponsorship first: "require sponsorship to extend your work authorization" asks about sponsorship.
     // "Authorized to work without sponsorship" is still the work authorization question.
     ['sponsorship', /^(?!.*\bwithout (\w+ ){0,3}sponsor).*sponsor/],
-    ['workAuth', /authori[sz]ed to work|work authori[sz]ation|eligible to work|right to work|legally (able|permitted) to work/],
+    ['workAuth', /authori[sz]ed to work|work authori[sz]ation|eligible to work|right to work|legally (able|permitted|entitled) to work|entitled to work/],
     // Export control screens list countries, so these come before the country rule
     ['sanctioned', /\bcuba|\biran\b|north korea|\bsyria|crimea|sanction|embargo|export control/],
     ['usCitizen', /\bu ?s citizen|citizen of the united states|united states citizen|american citizen/],
@@ -106,6 +106,12 @@
     'united states of america': 'United States', uk: 'United Kingdom', 'u k': 'United Kingdom', britain: 'United Kingdom',
     'great britain': 'United Kingdom', england: 'United Kingdom', uae: 'United Arab Emirates'
   };
+  // Countries a question or posting may name, to tell whether it asks about yours
+  const COUNTRIES = ['United States', 'Canada', 'Mexico', 'Brazil', 'Argentina', 'Colombia', 'Chile', 'United Kingdom', 'Ireland',
+    'Germany', 'France', 'Netherlands', 'Belgium', 'Spain', 'Portugal', 'Italy', 'Switzerland', 'Austria', 'Poland', 'Czech Republic',
+    'Romania', 'Sweden', 'Norway', 'Denmark', 'Finland', 'Israel', 'Turkey', 'United Arab Emirates', 'Saudi Arabia', 'Egypt',
+    'Nigeria', 'Kenya', 'South Africa', 'India', 'Pakistan', 'Bangladesh', 'China', 'Hong Kong', 'Taiwan', 'Japan', 'South Korea',
+    'Singapore', 'Malaysia', 'Indonesia', 'Thailand', 'Vietnam', 'Philippines', 'Australia', 'New Zealand'];
   const DIAL_CODES = {
     1: 'United States', 44: 'United Kingdom', 91: 'India', 61: 'Australia', 86: 'China', 49: 'Germany', 33: 'France',
     81: 'Japan', 82: 'South Korea', 65: 'Singapore', 971: 'United Arab Emirates', 52: 'Mexico', 55: 'Brazil', 234: 'Nigeria',
@@ -253,6 +259,32 @@
     return best && best.a;
   }
 
+  /** Countries named in some text, by the names in COUNTRIES. "Tell us" isn't the US, but "in the US" is. */
+  function countriesIn(text) {
+    const t = ` ${norm(text).replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ')} `;
+    const found = new Set(COUNTRIES.filter((c) => t.includes(` ${c.toLowerCase()} `)));
+    for (const [alias, c] of Object.entries(COUNTRY_ALIASES)) {
+      if (!['us', 'america'].includes(alias) && t.includes(` ${alias} `)) found.add(c);
+    }
+    if (/ (in|within|to|the) us /.test(t)) found.add('United States');
+    return found;
+  }
+
+  /**
+   * Your work authorization and sponsorship answers are for your own country. A question naming
+   * another one ("legally entitled to work in Canada?") is yours, and so is "the country where the
+   * position is located" when the posting names only other countries.
+   */
+  function aboutMyCountry(question) {
+    const mine = P.country;
+    if (!mine) return true;
+    const asked = countriesIn(question);
+    if (asked.size) return asked.has(mine);
+    const job = PAGE_JOB || jobContext();
+    const named = countriesIn([job.place, job.title, job.description.slice(0, 4000)].join(' '));
+    return !named.size || named.has(mine);
+  }
+
   /** Returns { key, value, source } for a field, or null. */
   function answerFor(el, question) {
     let key = ruleFor(norm(question));
@@ -260,6 +292,7 @@
       key = AUTOCOMPLETE[(el.getAttribute('autocomplete') || '').toLowerCase().split(' ').pop()]
         || ruleFor(norm([el.getAttribute('aria-label'), el.placeholder, el.name, el.id].join(' ')));
     }
+    if ((key === 'workAuth' || key === 'sponsorship') && !aboutMyCountry(question)) return null; // yours to answer
     if (key && P[key]) return { key, value: P[key], source: 'profile' };
     const saved = question && savedAnswer(question);
     if (saved) return { key: key || 'saved', value: saved, source: 'saved' };
@@ -1090,7 +1123,7 @@
 
   /** The posting itself: structured data if the page has it, else the biggest description block. */
   function jobContext() {
-    const job = { title: '', company: '', url: location.href, description: '' };
+    const job = { title: '', company: '', url: location.href, description: '', place: '' };
     const strip = (html) => {
       const d = document.createElement('div');
       d.innerHTML = html || '';
@@ -1126,6 +1159,9 @@
     job.description = job.description.replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim().slice(0, 15000);
     const og = (n) => (document.querySelector(`meta[property="${n}"]`) || {}).content || '';
     job.title = job.title || clean(og('og:title')) || textOf(document.querySelector('h1')) || clean(document.title);
+    // The heading's box usually names the place ("AirCover Specialist… Canada"), even when the description doesn't
+    const h1 = document.querySelector('h1');
+    job.place = h1 && h1.parentElement ? clean(h1.parentElement.innerText).slice(0, 300) : '';
     // "Job Application for Program Manager at Discord"
     job.company = job.company || clean(og('og:site_name')) || (clean(document.title).match(/\bat ([^|–—-]+)$/) || [])[1] || '';
     return job;
