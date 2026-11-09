@@ -202,6 +202,12 @@
       if (group) return textOf(byId(group, group.getAttribute('aria-labelledby'))).slice(0, 250);
       if (t) return t.slice(0, 250);
     }
+    // A group that names its question (Workable's radio groups): that's the question, not the option's own label
+    const named = el.closest('[role=radiogroup][aria-labelledby], [role=group][aria-labelledby], fieldset[aria-labelledby]');
+    if (named) {
+      const t = clean(named.getAttribute('aria-labelledby').split(/\s+/).map((id) => textOf(byId(named, id))).join(' '));
+      if (t) return t.slice(0, 250);
+    }
     const box = el.closest(CONTAINERS);
     if (box) {
       for (const t of box.querySelectorAll(TITLES)) {
@@ -218,7 +224,7 @@
       const others = all('input:not([type=hidden]), select, textarea', node)
         .filter((f) => f !== el && !(el.name && f.name === el.name));
       if (others.length) break;
-      const lab = node.querySelector(TITLES);
+      const lab = [...node.querySelectorAll(TITLES)].find((t) => !t.contains(el));
       if (lab && textOf(lab)) return textOf(lab).slice(0, 250);
     }
     // Some custom application forms render the prompt as a plain paragraph
@@ -1040,7 +1046,7 @@
     // Checkbox lists ("Select all that apply"). A lone checkbox is a consent box and stays yours.
     const boxes = new Map();
     for (const c of all('input[type=checkbox]')) {
-      const box = c.closest('fieldset, [role=group], .checkbox-group, [class*="checkbox" i][class*="group" i], .field-wrapper');
+      const box = c.closest('fieldset, [role=group], .checkbox-group, [class*="checkbox" i][class*="group" i], .field-wrapper, .application-question');
       if (box && visible(c.closest('label') || c.parentElement || c)) {
         if (!boxes.has(box)) boxes.set(box, []);
         boxes.get(box).push(c);
