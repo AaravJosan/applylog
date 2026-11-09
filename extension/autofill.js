@@ -22,8 +22,10 @@
     ['linkedin', /linked ?in/],
     ['github', /git ?hub/],
     ['website', /portfolio|website|personal (site|url)|\bblog\b/],
+    // Sponsorship first: "require sponsorship to extend your work authorization" asks about sponsorship.
+    // "Authorized to work without sponsorship" is still the work authorization question.
+    ['sponsorship', /^(?!.*\bwithout (\w+ ){0,3}sponsor).*sponsor/],
     ['workAuth', /authori[sz]ed to work|work authori[sz]ation|eligible to work|right to work|legally (able|permitted) to work/],
-    ['sponsorship', /sponsor/],
     // Export control screens list countries, so these come before the country rule
     ['sanctioned', /\bcuba|\biran\b|north korea|\bsyria|crimea|sanction|embargo|export control/],
     ['usCitizen', /\bu ?s citizen|citizen of the united states|united states citizen|american citizen/],
