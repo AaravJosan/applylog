@@ -523,6 +523,12 @@
   function searchTerms(ans) {
     if (LOCATION_KEYS.has(ans.key)) return [P.city || ans.value];
     if (ans.key === 'major') return [...new Set([ans.value, ...majorParts(ans.value)])];
+    // Searches match the list's own wording, so "University of California, Berkeley" finds nothing
+    // where "Berkeley" finds "University of California - Berkeley"
+    if (ans.key === 'school') {
+      const parts = clean(ans.value).split(/\s*[,–—]\s*|\s+-\s+/).filter(Boolean).sort((a, b) => a.length - b.length);
+      return [...new Set([ans.value, clean(ans.value.replace(/[,–—-]/g, ' ')), ...parts])];
+    }
     const level = degreeLevel(norm(ans.value));
     return [...new Set([ans.value, ...(level ? DEGREE_WORDS[level] : [])])];
   }
