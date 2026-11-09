@@ -37,7 +37,14 @@ function extractJob() {
     if (node['@graph']) return findJob(node['@graph']);
     return null;
   };
-  for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+  // iCIMS shows the posting in a same-site iframe, so look there too
+  const docs = [document];
+  for (const f of document.querySelectorAll('iframe')) {
+    try { if (f.contentDocument) docs.push(f.contentDocument); } catch (e) { /* another site's frame */ }
+  }
+  const scripts = docs.flatMap((d) => [...d.querySelectorAll('script[type="application/ld+json"]')]);
+  const known = (x) => typeof x === 'string' && x && !/^(unavailable|n\/?a|null|undefined)$/i.test(x.trim());
+  for (const s of scripts) {
     try {
       const job = findJob(JSON.parse(s.textContent));
       if (!job) continue;
@@ -46,9 +53,9 @@ function extractJob() {
       out.company = clean(typeof org === 'string' ? org : org && org.name);
       const places = [].concat(job.jobLocation || []).map((l) => {
         const a = (l && l.address) || {};
-        if (typeof a === 'string') return clean(a);
+        if (typeof a === 'string') return known(a) ? clean(a) : '';
         const country = a.addressCountry && (a.addressCountry.name || a.addressCountry);
-        return [a.addressLocality, a.addressRegion, country].filter((x) => typeof x === 'string' && x).join(', ');
+        return [a.addressLocality, a.addressRegion, country].filter(known).join(', ');
       }).filter(Boolean);
       out.location = places.join(' / ');
       if (job.jobLocationType === 'TELECOMMUTE') out.location = out.location ? `Remote / ${out.location}` : 'Remote';
@@ -137,6 +144,28 @@ function extractJob() {
     const slug = host.split('.')[0];
     const inName = (out.company.match(new RegExp(slug.replace(/[^a-z0-9]/gi, ''), 'i')) || [])[0];
     out.company = inName || titleCase(slug);
+  } else if (host.includes('jobvite.com')) {
+    // The tab reads "Nutanix Careers - Senior Expense Accountant"; the details line reads
+    // "Accounting & Finance | Bangalore, India | Req.Num.: 33018" with separators between
+    out.title = txt(['.jv-header', 'h2']) || out.title;
+    out.company = out.company || clean((document.title.match(/^(.+?)\s+Careers\b/) || [])[1]) || titleCase(pathParts[0]);
+    const detail = document.querySelector('.jv-job-detail-meta');
+    if (detail && !out.location) {
+      const parts = [''];
+      for (const n of detail.childNodes) {
+        if (n.nodeType === 1 && n.classList.contains('jv-inline-separator')) parts.push('');
+        else parts[parts.length - 1] += n.textContent;
+      }
+      const places = parts.map(clean).filter((t) => t && !/req\.? ?num|requisition/i.test(t));
+      out.location = places.length > 1 ? places.slice(1).join(' / ') : '';
+    }
+  } else if (host.includes('icims.com')) {
+    // careers-apac-atlassian.icims.com: the subdomain names the company, the frame the posting
+    const slug = host.split('.')[0].split('-').filter((w) => !/^(us|uk|ca|apac|emea|latam|global|external|internal|careers?|uscareers|jobs?|hr)$/i.test(w));
+    out.company = out.company || titleCase(slug.join(' '));
+    out.title = out.title || docs.map((d) => clean((d.querySelector('h1') || {}).textContent)).find(Boolean) || '';
+    // Its links carry screen sizes and time zones: keep the posting's own address
+    out.url = window.location.origin + window.location.pathname;
   } else if (host.includes('joinhandshake.com')) {
     // Job details live in the right-hand panel on /job-search/<id>, or the whole page on /jobs/<id>
     const panel = document.querySelector('[data-hook="right-content"]') || document.querySelector('main') || document;
