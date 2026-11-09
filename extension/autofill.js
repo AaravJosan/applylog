@@ -261,11 +261,11 @@
   }
 
   /** Countries named in some text, by the names in COUNTRIES. "Tell us" isn't the US, but "in the US" is. */
-  function countriesIn(text) {
+  function countriesIn(text, short = false) {
     const t = ` ${norm(text).replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ')} `;
     const found = new Set(COUNTRIES.filter((c) => t.includes(` ${c.toLowerCase()} `)));
     for (const [alias, c] of Object.entries(COUNTRY_ALIASES)) {
-      if (!['us', 'america'].includes(alias) && t.includes(` ${alias} `)) found.add(c);
+      if ((short || !['us', 'america'].includes(alias)) && t.includes(` ${alias} `)) found.add(c); // an option "US / UK" is never "tell us"
     }
     if (/ (in|within|to|the) us /.test(t)) found.add('United States');
     return found;
@@ -356,7 +356,18 @@
     return starts.length === 1 ? starts[0] : null;
   }
 
-  const pickFor = (options, ans) => (ans.key === 'major' ? pickMajor(options, ans.value) : pickOption(options, ans.value));
+  /** A "location" list of countries ("US / UK / India", "Poland") rather than cities: the one with your country. */
+  function pickCountry(options) {
+    if (!P.country) return null;
+    const mine = options.filter((o) => countriesIn(o.text, true).has(P.country));
+    if (mine.length <= 1) return mine[0] || null;
+    // "United States" over "United States Minor Outlying Islands"
+    const exact = mine.filter((o) => optionText(o.text) === optionText(P.country));
+    return exact.length === 1 ? exact[0] : null;
+  }
+
+  const pickFor = (options, ans) => (ans.key === 'major' ? pickMajor(options, ans.value)
+    : pickOption(options, ans.value) || (LOCATION_KEYS.has(ans.key) ? pickCountry(options) : null));
 
   function pickLocation(options) {
     const city = norm(P.city);
@@ -515,7 +526,7 @@
     const level = degreeLevel(norm(ans.value));
     return [...new Set([ans.value, ...(level ? DEGREE_WORDS[level] : [])])];
   }
-  const choose = (opts, ans) => (LOCATION_KEYS.has(ans.key) ? pickLocation(opts) : pickFor(opts, ans));
+  const choose = (opts, ans) => (LOCATION_KEYS.has(ans.key) ? pickLocation(opts) || pickCountry(opts) : pickFor(opts, ans));
 
   async function fillReactSelect(el, ans) {
     const state = bridge(el, { op: 'read' });
