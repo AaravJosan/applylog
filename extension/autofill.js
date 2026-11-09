@@ -58,7 +58,8 @@
     ['phone', /phone|mobile|\btel\b|\bcell\b/],
     ['zip', /\bzip\b|postal|post code|postcode/],
     ['city', /\bcity\b|\btown\b|address level2/],
-    ['state', /\bstate\b|province|address level1/],
+    // Not "a U.S. state bar" or "state license": those ask about credentials, not where you live
+    ['state', /^(?!.*\bstate (\w+ )?(bar|licen|certif|board|of the art)).*(\bstate\b|province|address level1)/],
     ['country', /country/],
     ['address', /street|address line ?1|^address$|\baddress$/],
     ['location', /location|where are you (currently )?(based|located)/],
