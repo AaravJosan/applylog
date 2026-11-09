@@ -976,7 +976,7 @@
           } else choices = { options: listed.map((o) => o.text), apply: (i) => setValue(el, listed[i].value) };
         } else if (custom) {
           ok = await fillCombobox(el, ans);
-        } else if (!(el.tagName === 'TEXTAREA' && ans.source === 'profile' && ans.key !== 'address')) {
+        } else if (!(el.tagName === 'TEXTAREA' && ans.source === 'profile' && ans.key !== 'address' && !linkBox(q, ans.key))) {
           setValue(el, ans.value);
           ok = true;
         }
@@ -1118,6 +1118,9 @@
   }
 
   // ---------- Drafting open-ended answers ----------
+
+  // A multi-line box that only asks for a link ("Github profile", "LinkedIn"), not "Share your GitHub PRs and what you learned"
+  const linkBox = (question, key) => ['linkedin', 'github', 'website'].includes(key) && norm(question).split(' ').length <= 4;
 
   function isOpenEnded(el, question) {
     if (!question || el.hasAttribute('data-applylog-drafting') || ruleFor(norm(question))) return false;
